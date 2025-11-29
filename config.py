@@ -9,15 +9,18 @@ class VolumeAlertConfig:
     SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     
     # Timeframes to monitor (name -> minutes)
+    # 1h: alerts on ±30% change from previous hour
+    # 24h: alerts on ±50% change in rolling 24h window
     TIMEFRAMES = {
         "1h": 60,
-        "12h": 720,
         "24h": 1440
     }
     
-    # Volume change threshold (%)
-    # Alert when |volume_change| >= this threshold
-    VOLUME_THRESHOLD = 30
+    # Volume change thresholds (%) by timeframe
+    VOLUME_THRESHOLDS = {
+        "1h": 30,      # 1-hour: ±30% threshold
+        "24h": 50      # 24-hour rolling: ±50% threshold
+    }
     
     # Max alerts per symbol to avoid spam
     # Example: Max 3 BTC alerts, max 3 ETH alerts, max 3 SOL alerts

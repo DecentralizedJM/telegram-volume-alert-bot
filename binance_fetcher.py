@@ -54,22 +54,42 @@ class BinanceDataFetcher:
         interval: str
     ) -> Optional[Tuple[Dict, Dict]]:
         """
-        Get current and previous candle for volume comparison
+        Get current and previous period for volume comparison
+        
+        For 1h: Get last 2 hourly candles (current hour + previous hour)
+        For 24h: Get data to compare 24h rolling windows
         
         Returns:
             Tuple of (current_candle, previous_candle) or None on error
         """
-        klines = self.get_klines(symbol, interval, limit=2)
+        if interval == "1h":
+            # For 1-hour: Need 2 candles (current + previous hour)
+            klines = self.get_klines(symbol, interval, limit=2)
+            if not klines or len(klines) < 2:
+                logger.warning(f"Insufficient candle data for {symbol} {interval}")
+                return None
+            
+            # Binance returns candles in ascending order (oldest first)
+            previous_candle = self._parse_candle(klines[0], symbol, interval)
+            current_candle = self._parse_candle(klines[1], symbol, interval)
+            
+            return current_candle, previous_candle
         
-        if not klines or len(klines) < 2:
-            logger.warning(f"Insufficient candle data for {symbol} {interval}")
-            return None
+        elif interval == "24h":
+            # For 24h rolling window: Need 2 complete 24h candles
+            # Binance's 1d interval = 24h candle, so limit=2 gives us what we need
+            klines = self.get_klines(symbol, "1d", limit=2)
+            if not klines or len(klines) < 2:
+                logger.warning(f"Insufficient 24h data for {symbol}")
+                return None
+            
+            # Binance returns candles in ascending order (oldest first)
+            previous_candle = self._parse_candle(klines[0], symbol, "24h")
+            current_candle = self._parse_candle(klines[1], symbol, "24h")
+            
+            return current_candle, previous_candle
         
-        # Binance returns candles in ascending order (oldest first)
-        previous_candle = self._parse_candle(klines[0], symbol, interval)
-        current_candle = self._parse_candle(klines[1], symbol, interval)
-        
-        return current_candle, previous_candle
+        return None
     
     @staticmethod
     def _parse_candle(kline: list, symbol: str, interval: str) -> Dict:

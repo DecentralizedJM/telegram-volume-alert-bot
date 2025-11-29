@@ -23,9 +23,10 @@ class CommandHandler:
 This bot is a <b>proprietary service</b> created for <b>@DecentralizedJM</b> to deliver real-time cryptocurrency volume alerts.
 
 <b>📊 Features:</b>
-• Real-time volume change detection (≥30%)
+• Real-time volume change detection
+• <b>1h Timeframe:</b> Alerts on ±30% volume changes
+• <b>24h Timeframe:</b> Alerts on ±50% volume changes
 • Monitoring: BTC, ETH, SOL
-• Timeframes: 1h, 12h, 24h
 • Instant Telegram notifications
 
 <b>🎯 Purpose:</b>
