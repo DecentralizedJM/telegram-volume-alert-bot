@@ -206,6 +206,12 @@ class VolumeAlertBot:
                         reply = "🚫 Only the bot owner can stop the bot."
                         await self.send_message(chat_id, reply)
                         logger.warning(f"⚠️ Unauthorized /stop by user {user_id}")
+                
+                # /status @Mudrex_Volume_bot - show bot status
+                elif text.startswith('/status') and '@Mudrex_Volume_bot' in text:
+                    from command_handler import CommandHandler
+                    await CommandHandler.handle_status(self, chat_id, self.bot_running)
+                    logger.info(f"✅ Status sent to {user_id} in group {chat_id}")
         
         except Exception as e:
             logger.error(f"Error handling update: {e}")
