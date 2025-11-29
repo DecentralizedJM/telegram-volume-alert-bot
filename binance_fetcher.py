@@ -54,45 +54,57 @@ class BinanceDataFetcher:
         interval: str
     ) -> Optional[Tuple[Dict, Dict]]:
         """
-        Get last 2 CLOSED candles for volume comparison
+        Get previous CLOSED candle and current INCOMPLETE candle for real-time comparison
         
-        Fetches 3 candles and skips the current incomplete candle
-        (Binance always returns current incomplete candle as the last one)
+        Fetches 3 candles to get 2 most recent candles:
+        - previous_closed: The last fully closed candle (e.g., last complete hour)
+        - current_incomplete: The current ongoing candle with real-time data
         
-        For 1h: Compares last 2 complete hourly candles
-        For 24h: Compares last 2 complete 24h periods
+        This allows real-time volume spike detection WITHOUT waiting for candle close.
+        
+        For 1h: Compares closed hour vs current incomplete hour (updates every 5 min)
+        For 24h: Compares closed day vs current incomplete day (updates every 5 min)
         
         Returns:
-            Tuple of (previous_closed_candle, candle_before_that) or None on error
+            Tuple of (previous_closed_candle, current_incomplete_candle) or None on error
         """
         if interval == "1h":
-            # Fetch 3 hourly candles to get 2 complete ones
-            # (skip the current incomplete hour)
+            # Fetch 3 hourly candles
             klines = self.get_klines(symbol, interval, limit=3)
-            if not klines or len(klines) < 3:
+            if not klines or len(klines) < 2:
                 logger.warning(f"Insufficient candle data for {symbol} {interval}")
                 return None
             
-            # Binance returns in ascending order: [oldest, middle, current_incomplete]
-            # We want: [middle, oldest] to compare the 2 complete closed candles
-            previous_candle = self._parse_candle(klines[1], symbol, interval)
-            current_candle = self._parse_candle(klines[0], symbol, interval)
+            # Binance returns in ascending order: [oldest, middle, current_INCOMPLETE]
+            # Index [1] = previous complete closed candle
+            # Index [2] = current incomplete candle (real-time data, still forming)
+            previous_closed = self._parse_candle(klines[1], symbol, interval)
+            current_incomplete = self._parse_candle(klines[2], symbol, interval)
             
-            return previous_candle, current_candle
+            logger.debug(f"{symbol} 1h: Comparing closed {previous_closed['timestamp']} "
+                        f"(vol: {previous_closed['volume']}) vs "
+                        f"incomplete {current_incomplete['timestamp']} (vol: {current_incomplete['volume']})")
+            
+            return previous_closed, current_incomplete
         
         elif interval == "24h":
-            # For 24h rolling window: Fetch 3 candles to get 2 complete ones
+            # For 24h rolling window: Fetch 3 daily candles
             klines = self.get_klines(symbol, "1d", limit=3)
-            if not klines or len(klines) < 3:
+            if not klines or len(klines) < 2:
                 logger.warning(f"Insufficient 24h data for {symbol}")
                 return None
             
-            # Binance returns in ascending order: [oldest, middle, current_incomplete]
-            # We want: [middle, oldest] to compare the 2 complete closed periods
-            previous_candle = self._parse_candle(klines[1], symbol, "24h")
-            current_candle = self._parse_candle(klines[0], symbol, "24h")
+            # Binance returns in ascending order: [oldest, middle, current_INCOMPLETE]
+            # Index [1] = previous complete closed day
+            # Index [2] = current incomplete day (real-time data, still forming)
+            previous_closed = self._parse_candle(klines[1], symbol, "24h")
+            current_incomplete = self._parse_candle(klines[2], symbol, "24h")
             
-            return previous_candle, current_candle
+            logger.debug(f"{symbol} 24h: Comparing closed {previous_closed['timestamp']} "
+                        f"(vol: {previous_closed['volume']}) vs "
+                        f"incomplete {current_incomplete['timestamp']} (vol: {current_incomplete['volume']})")
+            
+            return previous_closed, current_incomplete
         
         return None
     
