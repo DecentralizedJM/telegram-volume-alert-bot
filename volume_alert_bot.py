@@ -275,7 +275,7 @@ class VolumeAlertBot:
             if not result:
                 return
             
-            current, previous = result
+            previous, current = result  # Order: (previous_closed, current_closed)
             
             # Detect if alert should be sent
             alert = self.detector.detect_volume_alert(current, previous)

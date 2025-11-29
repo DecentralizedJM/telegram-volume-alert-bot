@@ -54,40 +54,45 @@ class BinanceDataFetcher:
         interval: str
     ) -> Optional[Tuple[Dict, Dict]]:
         """
-        Get current and previous period for volume comparison
+        Get last 2 CLOSED candles for volume comparison
         
-        For 1h: Get last 2 hourly candles (current hour + previous hour)
-        For 24h: Get data to compare 24h rolling windows
+        Fetches 3 candles and skips the current incomplete candle
+        (Binance always returns current incomplete candle as the last one)
+        
+        For 1h: Compares last 2 complete hourly candles
+        For 24h: Compares last 2 complete 24h periods
         
         Returns:
-            Tuple of (current_candle, previous_candle) or None on error
+            Tuple of (previous_closed_candle, candle_before_that) or None on error
         """
         if interval == "1h":
-            # For 1-hour: Need 2 candles (current + previous hour)
-            klines = self.get_klines(symbol, interval, limit=2)
-            if not klines or len(klines) < 2:
+            # Fetch 3 hourly candles to get 2 complete ones
+            # (skip the current incomplete hour)
+            klines = self.get_klines(symbol, interval, limit=3)
+            if not klines or len(klines) < 3:
                 logger.warning(f"Insufficient candle data for {symbol} {interval}")
                 return None
             
-            # Binance returns candles in ascending order (oldest first)
-            previous_candle = self._parse_candle(klines[0], symbol, interval)
-            current_candle = self._parse_candle(klines[1], symbol, interval)
+            # Binance returns in ascending order: [oldest, middle, current_incomplete]
+            # We want: [middle, oldest] to compare the 2 complete closed candles
+            previous_candle = self._parse_candle(klines[1], symbol, interval)
+            current_candle = self._parse_candle(klines[0], symbol, interval)
             
-            return current_candle, previous_candle
+            return previous_candle, current_candle
         
         elif interval == "24h":
-            # For 24h rolling window: Need 2 complete 24h candles
-            # Binance's 1d interval = 24h candle, so limit=2 gives us what we need
-            klines = self.get_klines(symbol, "1d", limit=2)
-            if not klines or len(klines) < 2:
+            # For 24h rolling window: Fetch 3 candles to get 2 complete ones
+            klines = self.get_klines(symbol, "1d", limit=3)
+            if not klines or len(klines) < 3:
                 logger.warning(f"Insufficient 24h data for {symbol}")
                 return None
             
-            # Binance returns candles in ascending order (oldest first)
-            previous_candle = self._parse_candle(klines[0], symbol, "24h")
-            current_candle = self._parse_candle(klines[1], symbol, "24h")
+            # Binance returns in ascending order: [oldest, middle, current_incomplete]
+            # We want: [middle, oldest] to compare the 2 complete closed periods
+            previous_candle = self._parse_candle(klines[1], symbol, "24h")
+            current_candle = self._parse_candle(klines[0], symbol, "24h")
             
-            return current_candle, previous_candle
+            return previous_candle, current_candle
         
         return None
     
