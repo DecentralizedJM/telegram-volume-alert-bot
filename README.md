@@ -1,6 +1,6 @@
 # Telegram Volume Alert Bot
 
-Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, and SOL for significant volume movements (±30%+) across multiple timeframes and sends instant notifications.
+Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, and SOL for significant volume movements across multiple timeframes and sends instant notifications.
 
 **Created for Mudrex™ | Proprietary Software**
 
@@ -9,11 +9,13 @@ Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, an
 ## Features
 
 - **Multi-Asset Monitoring**: BTC, ETH, SOL (easily extensible to other assets)
-- **Multiple Timeframes**: 1-hour, 12-hour, 24-hour candles
-- **Volume Detection**: Identifies volume increases/decreases of 30%+ from previous candle
+- **Dual Timeframe Monitoring**: 
+  - **1-Hour**: ±30% volume change detection
+  - **24-Hour**: ±50% volume change detection (rolling window)
+- **Consecutive Period Comparison**: Compares volume between consecutive periods (not fixed baselines)
 - **Real-Time Alerts**: Instant Telegram notifications with price and volume data
 - **Owner Control**: Start/stop monitoring with Telegram commands
-- **Persistent Monitoring**: Continuous market surveillance with configurable intervals
+- **Persistent Monitoring**: Continuous market surveillance (checks every 5 minutes)
 - **Professional Formatting**: HTML-formatted Telegram messages with emojis and metrics
 
 ---
@@ -78,17 +80,19 @@ Edit `config.py` to customize:
 # Monitoring symbols
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
-# Timeframes (in minutes)
+# Timeframes to monitor
 TIMEFRAMES = {
-    "1h": 60,
-    "12h": 720,
-    "24h": 1440
+    "1h": 60,       # 1-hour candle
+    "24h": 1440     # 24-hour rolling window
 }
 
-# Volume threshold percentage
-VOLUME_THRESHOLD = 30
+# Volume change thresholds (%) by timeframe
+VOLUME_THRESHOLDS = {
+    "1h": 30,       # Alert on ±30% hourly volume change
+    "24h": 50       # Alert on ±50% 24h rolling window change
+}
 
-# Check interval in seconds
+# Check interval in seconds (5 minutes)
 CHECK_INTERVAL = 300
 
 # Max alerts per symbol per cycle
@@ -97,20 +101,51 @@ MAX_ALERTS_PER_SYMBOL = 3
 
 ---
 
-## How It Works
+## Volume Detection Logic
+
+### How It Works
+
+The bot compares **consecutive time periods** to detect significant volume changes:
+
+**1-Hour Timeframe (1h)**
+- Compares: Current 1h candle vs Previous 1h candle
+- Threshold: ±30% volume change
+- Example: If volume was 100k in hour X and 130k in hour X+1 → +30% alert ✓
+
+**24-Hour Rolling Window (24h)**
+- Compares: Last 24h rolling window vs Previous 24h rolling window
+- Threshold: ±50% volume change
+- Uses Binance 1d (daily) candles for accurate rolling window calculation
+
+### Detection Formula
+
+```
+Volume Change % = ((Current Volume - Previous Volume) / Previous Volume) × 100
+
+Alert Triggers When:
+- 1h:  |Volume Change %| ≥ 30%
+- 24h: |Volume Change %| ≥ 50%
+```
+
+---
+
+## How It Works (Detailed)
 
 ### Data Flow
 
 ```
-Binance API → Fetch OHLCV Data → Volume Analysis → Detection → Telegram Alert
+Binance API → Fetch OHLCV Data → Compare Consecutive Periods → Volume Analysis → Alert Trigger → Telegram
 ```
 
-### Volume Detection
+### Alert Generation Process
 
-1. Fetches current and previous candle data from Binance
-2. Calculates volume change: `((current - previous) / previous) × 100`
-3. If `|change| ≥ VOLUME_THRESHOLD`: Generates alert
-4. Respects maximum alert limit per symbol per monitoring cycle
+1. **Every 5 minutes**, bot fetches current and previous candle data from Binance
+2. **For 1h**: Gets current 1h candle and previous 1h candle
+3. **For 24h**: Gets current 24h rolling window and previous 24h rolling window
+4. **Calculates**: Volume change percentage between consecutive periods
+5. **Compares**: If change meets threshold (1h: ±30%, 24h: ±50%), generates alert
+6. **Respects**: Maximum alert limit per symbol per monitoring cycle (prevents spam)
+7. **Sends**: Instant Telegram notification with formatted data
 
 ### Alert Format
 
@@ -118,8 +153,8 @@ Binance API → Fetch OHLCV Data → Volume Analysis → Detection → Telegram 
 🚨 BTCUSDT VOLUME ALERT 📈
 
 ⏱️ Timeframe: 1h
-� Current Price: $42,530.50
-� Volume Change: +35.2%
+💹 Current Price: $42,530.50
+📊 Volume Change: +35.2%
 
 ⚠️ INCREASE VOLUME DETECTED
 ```
