@@ -15,6 +15,7 @@ Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, an
 - **Consecutive Period Comparison**: Compares volume between consecutive periods (not fixed baselines)
 - **Real-Time Alerts**: Instant Telegram notifications with price and volume data
 - **Owner Control**: Start/stop monitoring with Telegram commands
+- **Smart Alert Queue**: 10-minute gap between alerts to prevent spam (first-alert-first-served basis)
 - **Persistent Monitoring**: Continuous market surveillance (checks every 5 minutes)
 - **Professional Formatting**: HTML-formatted Telegram messages with emojis and metrics
 
@@ -97,6 +98,51 @@ Current Configuration:
 
 ---
 
+## Smart Alert Queue System
+
+### How It Works
+
+To prevent alert spam when multiple assets trigger at similar times, the bot implements a **10-minute queue system**:
+
+**Rule: No two alerts within 10 minutes**
+
+1. **First Alert**: Sent immediately (t=0)
+   - "🚨 BTC volume +45%" → Sent now
+   - `last_alert_timestamp = 0`
+
+2. **Subsequent Alerts**: Queued if within 10 minutes
+   - "🚨 ETH volume -35%" (t=30s) → Queued (not sent yet)
+   - "🚨 SOL volume +60%" (t=45s) → Queued (not sent yet)
+
+3. **After 10 Minutes**: Next queued alert is released
+   - At t=600s → "🚨 ETH volume -35%" → Sent
+   - `last_alert_timestamp = 600`
+
+4. **10 Minutes Later**: Next alert from queue
+   - At t=1200s → "🚨 SOL volume +60%" → Sent
+   - `last_alert_timestamp = 1200`
+
+### Timeline Example
+
+```
+Time (min:sec)  Event                           Action
+───────────────────────────────────────────────────────────
+00:00           BTC volume drops -64%          📤 Sent (first)
+00:30           ETH volume drops -73%          📥 Queued (9:30 min wait)
+00:45           SOL volume drops -66%          📥 Queued (9:15 min wait)
+10:00           (10 min elapsed)               📤 ETH alert sent (queue: 1 pending)
+20:00           (another 10 min)               📤 SOL alert sent (queue: 0 pending)
+```
+
+### Benefits
+
+✅ **Prevents Alert Fatigue**: Max 1 notification per 10 minutes
+✅ **Fair Queue**: FIFO (First-In-First-Out) - alerts processed in trigger order
+✅ **No Lost Alerts**: All alerts are queued and will eventually be sent
+✅ **Configurable**: Change `ALERT_QUEUE_GAP_SECONDS` in `config.py` to adjust gap
+
+---
+
 ## Configuration
 
 Edit `config.py` to customize:
@@ -130,38 +176,56 @@ MAX_ALERTS_PER_SYMBOL = 3
 
 ### How It Works
 
-The bot compares **previous closed candle with current incomplete candle** to detect volume changes in REAL-TIME:
+The bot compares **consecutive closed candles** to detect significant volume changes:
 
 **1-Hour Timeframe (1h)**
-- Compares: Previous complete hour (closed) vs Current incomplete hour (live data)
+- Compares: Most recent closed hour vs Previous closed hour
 - Threshold: ±30% volume change
-- Updates: Every 5 minutes with fresh market data
-- Example: At 1:14 PM, if volume spike >30% compared to 12-1 PM close → Alert immediately (no wait for 1 PM close)
+- Updates: Every 5 minutes with latest market data
+- Example: If 12-1 PM hour had 75M volume and 1-2 PM hour has 27M volume → -64% alert
 
 **24-Hour Rolling Window (24h)**
-- Compares: Previous complete day (closed) vs Current incomplete day (rolling 24h)
+- Compares: Most recent closed day vs Previous closed day
 - Threshold: ±50% volume change
 - Updates: Every 5 minutes with latest volume data
+
+### Why Consecutive Closed Candles?
+
+**Why not use the current incomplete candle?**
+- Binance returns 3 candles: [older_closed, newer_closed, current_incomplete]
+- The incomplete candle [2] has almost no data (e.g., 4K trades vs 135K in complete hours)
+- Comparing to incomplete = unrealistic percentage changes
+- Solution: Use [0] and [1] which are both complete and give realistic comparisons
+
+**Example:**
+- [0] = 75.6M volume (complete hour, 135K trades)
+- [1] = 27.0M volume (complete hour, 61K trades)
+- [2] = 0.7M volume (incomplete, only 4.3K trades) ← Skip this!
+
+Change [1] vs [0] = -64.21% ✓ (realistic)
+Change [2] vs [1] = -97.40% ✗ (unrealistic, incomplete data)
 
 ### Detection Formula
 
 ```
-Volume Change % = ((Current Incomplete Volume - Previous Closed Volume) / Previous Closed Volume) × 100
+Volume Change % = ((Current Closed Volume - Previous Closed Volume) / Previous Closed Volume) × 100
 
 Alert Triggers When:
 - 1h:  |Volume Change %| ≥ 30%
 - 24h: |Volume Change %| ≥ 50%
 ```
 
-### Real-Time Behavior
+### Independent Per-Asset Alerting
 
-⚡ **Alerts happen continuously throughout the hour, not just when the candle closes:**
+✅ **Each asset checks independently and alerts when it crosses the threshold:**
 
-Example Timeline:
-- **1:00 PM** - Previous hour (12-1 PM) closes, bot starts checking against new incomplete hour
-- **1:05 PM** - Volume spike detected in BTC → **Alert sent for BTC only**
-- **1:14 PM** - ETH volume changes → **Alert sent for ETH only**  
-- **1:30 PM** - SOL volume changes → **Alert sent for SOL only**
+Example Timeline (every 5-minute check):
+- **1:00 PM** - New hour closes. Bot now compares 12-1 PM (75M) vs 1-2 PM (27M)
+- **1:05 PM** - Check 1: BTC -64% ≥ ±30% → **BTC Alert sent**
+- **1:10 PM** - Check 2: BTC still -64% (same closed hour) → No duplicate
+- **1:15 PM** - Check 3: ETH -73% ≥ ±30% → **ETH Alert sent** (independent)
+- **1:20 PM** - Check 4: SOL -66% ≥ ±30% → **SOL Alert sent** (independent)
+- **2:00 PM** - New hour closes. State resets for next comparison
 - **2:00 PM** - New hour starts, state resets
 
 **Key Point**: Each asset alerts **independently** when it crosses the threshold. You won't get batched alerts for all three together.
@@ -179,14 +243,19 @@ Binance API → Fetch OHLCV Data → Compare Consecutive Periods → Volume Anal
 ### Alert Generation Process
 
 1. **Every 5 minutes**, bot fetches OHLCV candle data from Binance
-2. **Fetch Strategy** (Real-time monitoring with incomplete candles):
-   - Fetches 3 candles from Binance
-   - Uses: **Previous CLOSED candle** vs **Current INCOMPLETE candle** (real-time data)
-   - This allows detection of volume spikes WITHOUT waiting for candle to close
-3. **For 1h**: Compares previous complete hour vs current incomplete hour (updates every 5 min)
-4. **For 24h**: Compares previous complete day vs current incomplete rolling 24h (updates every 5 min)
-5. **Calculates**: Volume change percentage: `((current_incomplete - previous_closed) / previous_closed) × 100`
+2. **Fetch Strategy** (Using consecutive closed candles):
+   - Fetches 3 candles from Binance in chronological order
+   - Discards incomplete candle [2] (has almost no trading data)
+   - Uses candles [0] and [1]: Both are CLOSED/COMPLETE candles
+   - This ensures realistic and meaningful volume comparisons
+3. **For 1h**: Compares 2 most recent closed hourly candles
+4. **For 24h**: Compares 2 most recent closed daily candles
+5. **Calculates**: Volume change percentage: `((current_closed - previous_closed) / previous_closed) × 100`
 6. **Compares**: If `|change|` meets threshold (1h: ±30%, 24h: ±50%), generates alert
+7. **Independent Alerts**: Each asset (BTC, ETH, SOL) checks independently and can trigger separate alerts
+8. **Sends**: Instant Telegram notification to monitoring group with formatted data
+
+**Important**: Crypto markets are 24/7. Volume changes at any hour (even off-hours) are real market movements and should trigger alerts.
 7. **Prevents Duplicates**: Uses open_time to avoid re-alerting on same incomplete candle within same period
 8. **Independent Alerts**: Each asset (BTC, ETH, SOL) alerts separately when it crosses threshold
 9. **Sends**: Instant Telegram notification with formatted data
