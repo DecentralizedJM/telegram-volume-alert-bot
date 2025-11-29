@@ -130,27 +130,41 @@ MAX_ALERTS_PER_SYMBOL = 3
 
 ### How It Works
 
-The bot compares **consecutive time periods** to detect significant volume changes:
+The bot compares **previous closed candle with current incomplete candle** to detect volume changes in REAL-TIME:
 
 **1-Hour Timeframe (1h)**
-- Compares: Current 1h candle vs Previous 1h candle
+- Compares: Previous complete hour (closed) vs Current incomplete hour (live data)
 - Threshold: ±30% volume change
-- Example: If volume was 100k in hour X and 130k in hour X+1 → +30% alert ✓
+- Updates: Every 5 minutes with fresh market data
+- Example: At 1:14 PM, if volume spike >30% compared to 12-1 PM close → Alert immediately (no wait for 1 PM close)
 
 **24-Hour Rolling Window (24h)**
-- Compares: Last 24h rolling window vs Previous 24h rolling window
+- Compares: Previous complete day (closed) vs Current incomplete day (rolling 24h)
 - Threshold: ±50% volume change
-- Uses Binance 1d (daily) candles for accurate rolling window calculation
+- Updates: Every 5 minutes with latest volume data
 
 ### Detection Formula
 
 ```
-Volume Change % = ((Current Volume - Previous Volume) / Previous Volume) × 100
+Volume Change % = ((Current Incomplete Volume - Previous Closed Volume) / Previous Closed Volume) × 100
 
 Alert Triggers When:
 - 1h:  |Volume Change %| ≥ 30%
 - 24h: |Volume Change %| ≥ 50%
 ```
+
+### Real-Time Behavior
+
+⚡ **Alerts happen continuously throughout the hour, not just when the candle closes:**
+
+Example Timeline:
+- **1:00 PM** - Previous hour (12-1 PM) closes, bot starts checking against new incomplete hour
+- **1:05 PM** - Volume spike detected in BTC → **Alert sent for BTC only**
+- **1:14 PM** - ETH volume changes → **Alert sent for ETH only**  
+- **1:30 PM** - SOL volume changes → **Alert sent for SOL only**
+- **2:00 PM** - New hour starts, state resets
+
+**Key Point**: Each asset alerts **independently** when it crosses the threshold. You won't get batched alerts for all three together.
 
 ---
 
@@ -165,19 +179,19 @@ Binance API → Fetch OHLCV Data → Compare Consecutive Periods → Volume Anal
 ### Alert Generation Process
 
 1. **Every 5 minutes**, bot fetches OHLCV candle data from Binance
-2. **Fetch Strategy** (Critical: Only compare CLOSED candles):
-   - Fetches 3 candles from Binance (oldest, middle, current)
-   - Discards the current incomplete candle (always has < 1 hour of data)
-   - Uses only the 2 COMPLETE/CLOSED candles for comparison
-3. **For 1h**: Compares two consecutive complete hourly candles
-4. **For 24h**: Compares two consecutive complete daily candles
-5. **Calculates**: Volume change percentage: `((current - previous) / previous) × 100`
+2. **Fetch Strategy** (Real-time monitoring with incomplete candles):
+   - Fetches 3 candles from Binance
+   - Uses: **Previous CLOSED candle** vs **Current INCOMPLETE candle** (real-time data)
+   - This allows detection of volume spikes WITHOUT waiting for candle to close
+3. **For 1h**: Compares previous complete hour vs current incomplete hour (updates every 5 min)
+4. **For 24h**: Compares previous complete day vs current incomplete rolling 24h (updates every 5 min)
+5. **Calculates**: Volume change percentage: `((current_incomplete - previous_closed) / previous_closed) × 100`
 6. **Compares**: If `|change|` meets threshold (1h: ±30%, 24h: ±50%), generates alert
-7. **Respects**: Maximum alert limit per symbol per monitoring cycle (prevents spam)
-8. **Sends**: Instant Telegram notification with formatted data
+7. **Prevents Duplicates**: Uses open_time to avoid re-alerting on same incomplete candle within same period
+8. **Independent Alerts**: Each asset (BTC, ETH, SOL) alerts separately when it crosses threshold
+9. **Sends**: Instant Telegram notification with formatted data
 
-**Why this matters**: Comparing complete candles ensures realistic volume changes. 
-Comparing an incomplete 1-minute candle to a complete 60-minute candle would show false -95% changes.
+**Why this works better**: Real-time comparison detects volume changes immediately, not after candle closes. Each asset can alert independently throughout the hour.
 
 ### Alert Format
 
