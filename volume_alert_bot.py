@@ -279,10 +279,9 @@ class VolumeAlertBot:
         """Check volume for all symbols and timeframes
         
         Strategy:
-        1. Reset per-symbol alert counter at start of each 5-min cycle
-        2. Check all 9 combinations (3 symbols × 3 timeframes)
-        3. Send alert IMMEDIATELY if volume change > 30%
-        4. Cap alerts per symbol at 3 per cycle
+        1. Check BOTH 1h AND 24h for each symbol
+        2. Only send alert if BOTH conditions are met
+        3. Cap alerts per symbol at 3 per cycle
         """
         # Only run if bot is active
         if not self.bot_running:
@@ -294,56 +293,111 @@ class VolumeAlertBot:
         
         tasks = []
         
+        # Check each symbol (requires BOTH 1h and 24h conditions)
         for symbol in self.symbols:
-            for timeframe_name, timeframe_minutes in self.timeframes.items():
-                # Convert to Binance interval format
-                binance_interval = VolumeAlertConfig.get_binance_interval(timeframe_minutes)
-                tasks.append(
-                    self.check_symbol_volume(symbol, binance_interval, timeframe_name)
-                )
+            tasks.append(self.check_symbol_dual_timeframe(symbol))
         
         # Run all checks concurrently
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
     
-    async def check_symbol_volume(self, symbol: str, interval: str, timeframe_name: str):
-        """Check volume for a specific symbol and timeframe
+    async def check_symbol_dual_timeframe(self, symbol: str):
+        """Check BOTH 1h and 24h for a symbol
         
-        Uses alert queue system:
-        1. First alert goes immediately
-        2. Subsequent alerts queued and sent after 10-min gap
+        ONLY sends alert if BOTH conditions are met:
+        - 1h volume change >= ±50%
+        - 24h volume change >= ±75%
+        
+        If both conditions met, combines into single alert message
         """
         try:
-            # Fetch current and previous candles
-            result = self.fetcher.get_current_and_previous(symbol, interval)
-            
-            if not result:
+            # Check 1-hour timeframe
+            result_1h = self.fetcher.get_current_and_previous(symbol, "1h")
+            if not result_1h:
                 return
             
-            previous, current = result  # Order: (previous_closed, current_closed)
+            previous_1h, current_1h = result_1h
+            alert_1h = self.detector.detect_volume_alert(current_1h, previous_1h)
             
-            # Detect if alert should be sent
-            alert = self.detector.detect_volume_alert(current, previous)
+            # Check 24-hour timeframe
+            result_24h = self.fetcher.get_current_and_previous(symbol, "24h")
+            if not result_24h:
+                return
             
-            if alert:
-                current_time = time.time()
-                time_since_last = current_time - self.last_alert_timestamp
+            previous_24h, current_24h = result_24h
+            alert_24h = self.detector.detect_volume_alert(current_24h, previous_24h)
+            
+            # ONLY send if BOTH 1h AND 24h conditions are met
+            if alert_1h and alert_24h:
+                # Combine both alerts into one message
+                combined_alert = {
+                    "symbol": symbol,
+                    "volume_change_pct_1h": alert_1h["volume_change_pct"],
+                    "volume_change_pct_24h": alert_24h["volume_change_pct"],
+                    "type_1h": alert_1h["type"],
+                    "type_24h": alert_24h["type"],
+                    "current_price": current_1h.get("close", 0),
+                    "timestamp": datetime.now().isoformat(),
+                    "open_time": current_1h["open_time"]  # For deduplication
+                }
                 
-                # If last alert was < 10 min ago, queue this alert
-                if time_since_last < self.alert_queue_gap and self.last_alert_timestamp > 0:
-                    self.pending_alerts.append((current_time, alert))
-                    wait_time = self.alert_queue_gap - time_since_last
-                    logger.info(f"📥 Alert QUEUED for {symbol}: {alert['volume_change_pct']:+.2f}% "
-                               f"(will send in {wait_time:.0f}s, queue size: {len(self.pending_alerts)})")
+                # Check if we can send more alerts for this symbol
+                if self.alerts_sent_this_cycle[symbol] < self.max_alerts_per_symbol:
+                    current_time = time.time()
+                    time_since_last = current_time - self.last_alert_timestamp
+                    
+                    # If last alert was < 10 min ago, queue this alert
+                    if time_since_last < self.alert_queue_gap and self.last_alert_timestamp > 0:
+                        self.pending_alerts.append((current_time, combined_alert))
+                        wait_time = self.alert_queue_gap - time_since_last
+                        logger.info(f"📥 Alert QUEUED for {symbol}: 1h {alert_1h['volume_change_pct']:+.2f}% + "
+                                   f"24h {alert_24h['volume_change_pct']:+.2f}% "
+                                   f"(will send in {wait_time:.0f}s, queue size: {len(self.pending_alerts)})")
+                    else:
+                        # Send immediately (first alert or enough time has passed)
+                        await self.send_combined_alert(combined_alert)
+                        self.last_alert_timestamp = current_time
+                        self.alerts_sent_this_cycle[symbol] += 1
+                        logger.info(f"📤 Alert sent for {symbol}: 1h {alert_1h['volume_change_pct']:+.2f}% + "
+                                   f"24h {alert_24h['volume_change_pct']:+.2f}% "
+                                   f"({self.alerts_sent_this_cycle[symbol]}/{self.max_alerts_per_symbol})")
                 else:
-                    # Send immediately (first alert or enough time has passed)
-                    await self.telegram.send_alert(alert)
-                    self.last_alert_timestamp = current_time
-                    logger.info(f"📤 Alert sent for {symbol} - {alert['volume_change_pct']:+.2f}% "
-                               f"(queue size: {len(self.pending_alerts)})")
+                    logger.debug(f"⚠️ Max alerts reached for {symbol} this cycle ({self.max_alerts_per_symbol})")
+            else:
+                # Log when conditions are NOT met (for debugging)
+                if alert_1h:
+                    pct_1h = alert_1h.get('volume_change_pct', 0) if isinstance(alert_1h, dict) else 0
+                    pct_24h = alert_24h.get('volume_change_pct', 0) if isinstance(alert_24h, dict) else 0
+                    logger.debug(f"⏭️ {symbol}: 1h {pct_1h:+.1f}% (meets), 24h {pct_24h:+.1f}% (no meet)")
+                elif alert_24h:
+                    pct_1h = alert_1h.get('volume_change_pct', 0) if isinstance(alert_1h, dict) else 0
+                    pct_24h = alert_24h.get('volume_change_pct', 0) if isinstance(alert_24h, dict) else 0
+                    logger.debug(f"⏭️ {symbol}: 1h {pct_1h:+.1f}% (no meet), 24h {pct_24h:+.1f}% (meets)")
         
         except Exception as e:
-            logger.error(f"Error checking {symbol} {timeframe_name}: {e}")
+            logger.error(f"Error checking {symbol}: {e}")
+    
+    async def send_combined_alert(self, alert: dict):
+        """Send combined 1h + 24h alert to Telegram"""
+        try:
+            # Format combined alert message
+            message = (
+                f"🚨 {alert['symbol']} VOLUME ALERT\n\n"
+                f"💹 Current Price: ${alert['current_price']:,.2f}\n\n"
+                f"⏱️ <b>1-Hour Change:</b>\n"
+                f"📊 {alert['volume_change_pct_1h']:+.2f}%\n"
+                f"{'📈 INCREASE' if alert['volume_change_pct_1h'] > 0 else '📉 DECREASE'}\n\n"
+                f"<b>24-Hour Change:</b>\n"
+                f"📊 {alert['volume_change_pct_24h']:+.2f}%\n"
+                f"{'📈 INCREASE' if alert['volume_change_pct_24h'] > 0 else '📉 DECREASE'}"
+            )
+            
+            await self.telegram.send_alert_message(message)
+            logger.info(f"✅ Combined alert sent for {alert['symbol']}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending combined alert: {e}")
+            return False
     
     def test_telegram(self):
         """Test Telegram connectivity"""

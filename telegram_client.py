@@ -45,6 +45,22 @@ class TelegramClient:
             logger.error(f"Error sending alert: {e}")
             return False
     
+    async def send_alert_message(self, message: str) -> bool:
+        """
+        Send pre-formatted alert message to Telegram
+        
+        Args:
+            message: Pre-formatted message text
+        
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        try:
+            return await self.send_message(self.chat_id, message)
+        except Exception as e:
+            logger.error(f"Error sending alert message: {e}")
+            return False
+    
     async def send_message(self, chat_id: int, text: str) -> bool:
         """
         Send a message to a specific chat
