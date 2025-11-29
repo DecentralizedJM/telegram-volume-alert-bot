@@ -139,13 +139,20 @@ Binance API → Fetch OHLCV Data → Compare Consecutive Periods → Volume Anal
 
 ### Alert Generation Process
 
-1. **Every 5 minutes**, bot fetches current and previous candle data from Binance
-2. **For 1h**: Gets current 1h candle and previous 1h candle
-3. **For 24h**: Gets current 24h rolling window and previous 24h rolling window
-4. **Calculates**: Volume change percentage between consecutive periods
-5. **Compares**: If change meets threshold (1h: ±30%, 24h: ±50%), generates alert
-6. **Respects**: Maximum alert limit per symbol per monitoring cycle (prevents spam)
-7. **Sends**: Instant Telegram notification with formatted data
+1. **Every 5 minutes**, bot fetches OHLCV candle data from Binance
+2. **Fetch Strategy** (Critical: Only compare CLOSED candles):
+   - Fetches 3 candles from Binance (oldest, middle, current)
+   - Discards the current incomplete candle (always has < 1 hour of data)
+   - Uses only the 2 COMPLETE/CLOSED candles for comparison
+3. **For 1h**: Compares two consecutive complete hourly candles
+4. **For 24h**: Compares two consecutive complete daily candles
+5. **Calculates**: Volume change percentage: `((current - previous) / previous) × 100`
+6. **Compares**: If `|change|` meets threshold (1h: ±30%, 24h: ±50%), generates alert
+7. **Respects**: Maximum alert limit per symbol per monitoring cycle (prevents spam)
+8. **Sends**: Instant Telegram notification with formatted data
+
+**Why this matters**: Comparing complete candles ensures realistic volume changes. 
+Comparing an incomplete 1-minute candle to a complete 60-minute candle would show false -95% changes.
 
 ### Alert Format
 
@@ -195,6 +202,28 @@ telegram-volume-alert-bot/
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | Target chat ID for alerts |
 | `TELEGRAM_OWNER_CHAT_ID` | Owner chat ID for command control |
+
+---
+
+## Critical Fix: Incomplete Candle Handling
+
+**Latest Update (v1.1)**: Fixed issue where bot was comparing incomplete current candles to complete previous candles.
+
+### The Problem
+- Binance API returns the current incomplete candle as the newest data point
+- Comparing incomplete candle (1 min old, partial data) to complete candle (60 min old, full data)
+- Result: False alerts showing -95%, -97% volume changes
+
+### The Solution  
+- Fetch 3 candles instead of 2
+- Discard the current incomplete candle
+- Compare only 2 COMPLETE/CLOSED candles
+- Result: Realistic alerts like +63.51% volume changes
+
+### Impact
+✅ All false alerts eliminated
+✅ Only real market movements detected
+✅ Accurate ±30% and ±50% threshold comparisons
 
 ---
 
