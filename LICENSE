@@ -1,0 +1,44 @@
+# PROPRIETARY LICENSE
+
+## Telegram Volume Alert Bot
+
+**Copyright © 2025 @DecentralizedJM. All rights reserved.**
+
+### License Grant
+
+This software ("Bot") and all associated code, documentation, and materials are proprietary and confidential property of @DecentralizedJM (owner). This Bot was created exclusively for **Mudrex** and related trading operations.
+
+### Restrictions
+
+You may **NOT**:
+- Copy, modify, or distribute this software without explicit written permission from @DecentralizedJM
+- Use this software for commercial purposes outside of authorized Mudrex operations
+- Reverse engineer, decompile, or disassemble this software
+- Remove or alter any proprietary notices or labels on this software
+- Create derivative works based on this software
+- Deploy or run this software on servers or systems without authorization
+
+### Permitted Use
+
+This software may only be used by:
+1. The original author (@DecentralizedJM)
+2. Authorized personnel of Mudrex with explicit written consent
+3. Educational and portfolio review purposes with proper attribution
+
+### Disclaimer
+
+THIS SOFTWARE IS PROVIDED "AS-IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY.
+
+### Third-Party Licenses
+
+This software uses the following third-party libraries, each with their own licenses:
+- requests (Apache 2.0)
+- python-dotenv (BSD)
+- Binance API (as per Binance terms of service)
+- Telegram Bot API (as per Telegram terms of service)
+
+### Contact
+
+For inquiries regarding licensing, commercial use, or authorization: [@DecentralizedJM](https://github.com/DecentralizedJM)
+
+**Created for Mudrex™**
