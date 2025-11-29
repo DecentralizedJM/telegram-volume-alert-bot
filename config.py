@@ -26,6 +26,11 @@ class VolumeAlertConfig:
     # Example: Max 3 BTC alerts, max 3 ETH alerts, max 3 SOL alerts
     MAX_ALERTS_PER_SYMBOL = 3
     
+    # Alert queue settings: Minimum gap between alerts (in seconds)
+    # When first alert is sent, wait at least 10 minutes before next alert
+    # This prevents alert spam - only 1 alert per 10 minutes maximum
+    ALERT_QUEUE_GAP_SECONDS = 600  # 10 minutes = 600 seconds
+    
     # Check interval in seconds (5 minutes = 300 seconds)
     # Bot checks every 5 minutes and sends alerts immediately if volume > 30%
     CHECK_INTERVAL = 300

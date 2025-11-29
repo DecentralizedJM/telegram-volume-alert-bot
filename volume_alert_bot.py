@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -55,6 +56,15 @@ class VolumeAlertBot:
         # Format: {"BTCUSDT": 2, "ETHUSDT": 1, "SOLUSDT": 0}
         self.alerts_sent_this_cycle = {symbol: 0 for symbol in self.symbols}
         
+        # Alert queue system: Track last alert timestamp to enforce 10-min gap
+        # Format: timestamp of last alert sent (any symbol)
+        self.last_alert_timestamp = 0
+        self.alert_queue_gap = VolumeAlertConfig.ALERT_QUEUE_GAP_SECONDS  # 600 seconds (10 minutes)
+        
+        # Pending alerts queue: Store alerts that should be sent after gap period
+        # Format: [(timestamp, alert_dict), ...]
+        self.pending_alerts = []
+        
         # Command handling
         self.last_update_id = 0
         self.bot_running = True
@@ -81,6 +91,7 @@ class VolumeAlertBot:
             await asyncio.gather(
                 self.monitoring_loop(),
                 self.command_listener_loop(),
+                self.alert_queue_processor(),
                 return_exceptions=True
             )
         except KeyboardInterrupt:
@@ -132,6 +143,34 @@ class VolumeAlertBot:
             except Exception as e:
                 logger.error(f"Error in command listener: {e}")
                 await asyncio.sleep(5)
+    
+    async def alert_queue_processor(self):
+        """Process pending alerts from queue
+        
+        Enforces 10-minute gap between alerts:
+        - If last alert was sent < 10 min ago, queue the new alert
+        - Check queue every 10 seconds for alerts ready to send
+        """
+        while True:
+            try:
+                current_time = time.time()
+                
+                # Check if any pending alerts are ready to send (gap elapsed)
+                if self.pending_alerts:
+                    alert_timestamp, alert = self.pending_alerts[0]
+                    time_since_last = current_time - self.last_alert_timestamp
+                    
+                    # If 10 minutes have passed since last alert, send the next one
+                    if time_since_last >= self.alert_queue_gap:
+                        self.pending_alerts.pop(0)  # Remove from queue
+                        await self.telegram.send_alert(alert)
+                        self.last_alert_timestamp = current_time
+                        logger.info(f"📤 Queued alert sent for {alert['symbol']} (queue size: {len(self.pending_alerts)})")
+                
+                await asyncio.sleep(10)  # Check queue every 10 seconds
+            except Exception as e:
+                logger.error(f"Error in alert queue processor: {e}")
+                await asyncio.sleep(10)
     
     async def fetch_updates(self):
         """Fetch updates from Telegram API"""
@@ -270,9 +309,9 @@ class VolumeAlertBot:
     async def check_symbol_volume(self, symbol: str, interval: str, timeframe_name: str):
         """Check volume for a specific symbol and timeframe
         
-        Sends alert IMMEDIATELY if:
-        1. Volume change is >= 30%
-        2. Haven't sent 3+ alerts for this symbol in this cycle
+        Uses alert queue system:
+        1. First alert goes immediately
+        2. Subsequent alerts queued and sent after 10-min gap
         """
         try:
             # Fetch current and previous candles
@@ -287,14 +326,21 @@ class VolumeAlertBot:
             alert = self.detector.detect_volume_alert(current, previous)
             
             if alert:
-                # Check if we can send more alerts for this symbol
-                if self.alerts_sent_this_cycle[symbol] < self.max_alerts_per_symbol:
-                    # Send immediately
-                    await self.telegram.send_alert(alert)
-                    self.alerts_sent_this_cycle[symbol] += 1
-                    logger.info(f"📤 Alert sent for {symbol} - {self.alerts_sent_this_cycle[symbol]}/{self.max_alerts_per_symbol}")
+                current_time = time.time()
+                time_since_last = current_time - self.last_alert_timestamp
+                
+                # If last alert was < 10 min ago, queue this alert
+                if time_since_last < self.alert_queue_gap and self.last_alert_timestamp > 0:
+                    self.pending_alerts.append((current_time, alert))
+                    wait_time = self.alert_queue_gap - time_since_last
+                    logger.info(f"📥 Alert QUEUED for {symbol}: {alert['volume_change_pct']:+.2f}% "
+                               f"(will send in {wait_time:.0f}s, queue size: {len(self.pending_alerts)})")
                 else:
-                    logger.debug(f"⚠️ Max alerts reached for {symbol} this cycle ({self.max_alerts_per_symbol})")
+                    # Send immediately (first alert or enough time has passed)
+                    await self.telegram.send_alert(alert)
+                    self.last_alert_timestamp = current_time
+                    logger.info(f"📤 Alert sent for {symbol} - {alert['volume_change_pct']:+.2f}% "
+                               f"(queue size: {len(self.pending_alerts)})")
         
         except Exception as e:
             logger.error(f"Error checking {symbol} {timeframe_name}: {e}")
