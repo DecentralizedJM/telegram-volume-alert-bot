@@ -54,21 +54,46 @@ python3 volume_alert_bot.py
 
 ## Usage
 
-### Starting the Bot
+### Bot Commands
 
+#### `/start @BotUsername` - Activate Monitoring
 In Telegram group chat:
 ```
 /start @YourBotUsername
 ```
+**Owner-only**: Activates volume monitoring (only the owner can use this)
 
-### Stopping the Bot
-
+#### `/stop @BotUsername` - Pause Monitoring
 In Telegram group chat:
 ```
 /stop @YourBotUsername
 ```
+**Owner-only**: Pauses volume monitoring (only the owner can use this)
 
-**Note**: Only the owner (defined by `TELEGRAM_OWNER_CHAT_ID`) can control the bot.
+#### `/status @BotUsername` - Check Bot Status
+In Telegram group chat:
+```
+/status @YourBotUsername
+```
+**Anyone can use**: Shows the current bot status, configuration, and available commands
+
+Example Response:
+```
+📊 Mudrex Volume Alert Bot Status
+
+✅ Bot is active
+⏱️ Volume data checking every 5 minutes
+
+Current Configuration:
+• Monitoring: BTCUSDT, ETHUSDT, SOLUSDT
+• 1h Threshold: ±30% volume change
+• 24h Threshold: ±50% volume change
+• Check Interval: 5 minutes
+```
+
+---
+
+**Note**: `/start` and `/stop` are owner-only commands (defined by `TELEGRAM_OWNER_CHAT_ID`). Anyone can use `/status`.
 
 ---
 
