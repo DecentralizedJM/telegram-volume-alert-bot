@@ -9,17 +9,16 @@ Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, an
 ## Features
 
 - **Multi-Asset Monitoring**: BTC, ETH, SOL (easily extensible to other assets)
-- **Dual Timeframe Monitoring** (BOTH required):
-  - **1-Hour**: ±50% volume change detection
-  - **24-Hour**: ±75% volume change detection (rolling window)
-- **Dual-Timeframe Requirement**: Only alerts when BOTH conditions are triggered simultaneously for high accuracy
-- **Higher Thresholds**: Reduced from 30%/50% to 50%/75% to minimize false positives
-- **Consecutive Period Comparison**: Compares volume between consecutive periods (not fixed baselines)
+- **Independent Timeframe Checking**:
+  - **1-Hour**: ±50% volume change detection (max 3 alerts per day per asset)
+  - **24-Hour**: ±75% volume change detection (max 1 alert per day per asset)
+- **Period-Based Locking**: Once an alert triggers, it's locked until the next period starts (hourly for 1h, daily for 24h)
+- **Consecutive Period Comparison**: Compares volume between consecutive closed periods
 - **Real-Time Alerts**: Instant Telegram notifications with price and volume data
 - **Owner Control**: Start/stop monitoring with Telegram commands
-- **Smart Alert Queue**: 10-minute gap between alerts to prevent spam (first-alert-first-served basis)
+- **Smart Alert Queue**: 10-minute gap between alerts to prevent spam (FIFO queue system)
 - **Persistent Monitoring**: Continuous market surveillance (checks every 5 minutes)
-- **Professional Formatting**: HTML-formatted Telegram messages with emojis and metrics
+- **Professional Formatting**: Clean, emoji-enhanced Telegram messages with direction and metrics
 
 ---
 
@@ -89,9 +88,10 @@ Example Response:
 
 Current Configuration:
 • Monitoring: BTCUSDT, ETHUSDT, SOLUSDT
-• 1h Threshold: ±30% volume change
-• 24h Threshold: ±50% volume change
+• 1h Threshold: ±50% volume change (max 3/day per asset)
+• 24h Threshold: ±75% volume change (max 1/day per asset)
 • Check Interval: 5 minutes
+• Alert Queue Gap: 10 minutes
 ```
 
 ---
@@ -104,43 +104,64 @@ Current Configuration:
 
 ### How It Works
 
-To prevent alert spam when multiple assets trigger at similar times, the bot implements a **10-minute queue system**:
+To prevent alert spam and maintain professional alert delivery, the bot implements a **period-based locking with 10-minute queue system**:
 
-**Rule: No two alerts within 10 minutes**
+**Alert Limits per Period:**
+- **1-Hour Period**: Maximum 3 alerts per asset per hour (resets hourly)
+- **24-Hour Period**: Maximum 1 alert per asset per day (resets daily)
+
+**Queue Spacing Rule: Minimum 10 minutes between alert deliveries**
 
 1. **First Alert**: Sent immediately (t=0)
-   - "🚨 BTC volume +45%" → Sent now
-   - `last_alert_timestamp = 0`
+   - "� BTC 1h: -64.21% volume" → Sent now
+   - Count: 1/3, Period Lock: ON
 
-2. **Subsequent Alerts**: Queued if within 10 minutes
-   - "🚨 ETH volume -35%" (t=30s) → Queued (not sent yet)
-   - "🚨 SOL volume +60%" (t=45s) → Queued (not sent yet)
+2. **Subsequent Alerts** (within 10 minutes): Queued
+   - "� ETH 1h: +73.56% volume" (t=30s) → Queued (will send in 9:30)
+   - "� SOL 1h: -66.43% volume" (t=45s) → Queued (will send in 9:15)
 
 3. **After 10 Minutes**: Next queued alert is released
-   - At t=600s → "🚨 ETH volume -35%" → Sent
-   - `last_alert_timestamp = 600`
+   - At t=600s → "� ETH 1h: +73.56% volume" → Sent
+   - Count: 1/3, Period Lock: ON
 
 4. **10 Minutes Later**: Next alert from queue
-   - At t=1200s → "🚨 SOL volume +60%" → Sent
-   - `last_alert_timestamp = 1200`
+   - At t=1200s → "� SOL 1h: -66.43% volume" → Sent
+   - Count: 1/3, Period Lock: ON
 
 ### Timeline Example
 
 ```
-Time (min:sec)  Event                           Action
-───────────────────────────────────────────────────────────
-00:00           BTC volume drops -64%          📤 Sent (first)
-00:30           ETH volume drops -73%          📥 Queued (9:30 min wait)
-00:45           SOL volume drops -66%          📥 Queued (9:15 min wait)
-10:00           (10 min elapsed)               📤 ETH alert sent (queue: 1 pending)
-20:00           (another 10 min)               📤 SOL alert sent (queue: 0 pending)
+Time (min:sec)  Symbol  Event                   Action                    Queue Size
+────────────────────────────────────────────────────────────────────────
+00:00           BTC     -64% volume             📤 Sent (first)            0
+00:30           ETH     +73% volume             📥 Queued (9:30 wait)       1
+00:45           SOL     -66% volume             📥 Queued (9:15 wait)       2
+10:00           ETH     (10 min elapsed)        📤 Dequeued & sent          1
+20:00           SOL     (another 10 min)        📤 Dequeued & sent          0
 ```
+
+### Period-Based Locking
+
+Once an alert triggers for a symbol/timeframe:
+- **Lock is activated** for that period
+- **No more alerts** can be sent for that symbol/timeframe until the period changes
+- **Period resets** automatically:
+  - **1h**: Every hour (e.g., 2:00 AM, 3:00 AM, 4:00 AM)
+  - **24h**: Every day (e.g., midnight UTC)
+
+**Example**:
+- 02:15 AM: BTC 1h alert sent (-64%), lock ON, count 1/3
+- 02:20 AM: Another -50% volume for BTC 1h detected → **Blocked** (already alerted this hour)
+- 03:00 AM: New hour starts → lock resets, counter resets to 0
+- 03:05 AM: Same -50% pattern detected → **Can send again** (new period)
 
 ### Benefits
 
 ✅ **Prevents Alert Fatigue**: Max 1 notification per 10 minutes
 ✅ **Fair Queue**: FIFO (First-In-First-Out) - alerts processed in trigger order
+✅ **Limits Per Period**: Can't exceed 3 alerts/hour or 1 alert/day per asset
 ✅ **No Lost Alerts**: All alerts are queued and will eventually be sent
+✅ **No Duplicate Alerts**: Period locking prevents multiple alerts for same movement
 ✅ **Configurable**: Change `ALERT_QUEUE_GAP_SECONDS` in `config.py` to adjust gap
 
 ---
@@ -162,14 +183,14 @@ TIMEFRAMES = {
 # Volume change thresholds (%) by timeframe
 VOLUME_THRESHOLDS = {
     "1h": 50,       # Alert on ±50% hourly volume change
-    "24h": 75       # Alert on ±75% 24h rolling window change
+    "24h": 75       # Alert on ±75% daily volume change
 }
 
 # Check interval in seconds (5 minutes)
 CHECK_INTERVAL = 300
 
-# Max alerts per symbol per cycle
-MAX_ALERTS_PER_SYMBOL = 3
+# Alert queue gap in seconds (10 minutes minimum between alerts)
+ALERT_QUEUE_GAP_SECONDS = 600
 ```
 
 ---
@@ -178,26 +199,48 @@ MAX_ALERTS_PER_SYMBOL = 3
 
 ### How It Works
 
-The bot compares **consecutive closed candles** to detect significant volume changes:
+The bot independently checks each symbol and timeframe combination to detect significant volume changes:
 
 **1-Hour Timeframe (1h)**
 - Compares: Most recent closed hour vs Previous closed hour
-- Threshold: ±30% volume change
-- Updates: Every 5 minutes with latest market data
-- Example: If 12-1 PM hour had 75M volume and 1-2 PM hour has 27M volume → -64% alert
-
-**24-Hour Rolling Window (24h)**
-- Compares: Most recent closed day vs Previous closed day
 - Threshold: ±50% volume change
+- Max Alerts: 3 per asset per hour (resets at the top of each hour)
+- Updates: Every 5 minutes with latest market data
+- Example: Hour 1-2 PM has 75M volume, Hour 2-3 PM has 27M volume → -64% alert
+
+**24-Hour Timeframe (24h)**
+- Compares: Most recent closed day vs Previous closed day
+- Threshold: ±75% volume change
+- Max Alerts: 1 per asset per day (resets at midnight UTC)
 - Updates: Every 5 minutes with latest volume data
+- Example: Day 1 has 2B volume, Day 2 has 525M volume → -73.75% alert
 
-### Why Consecutive Closed Candles?
+### Independent Checking
 
-**Why not use the current incomplete candle?**
+Each symbol × timeframe combination is checked **independently**:
+- BTC 1h and BTC 24h are checked separately
+- ETH 1h and SOL 1h are independent of each other
+- No "dual requirement" - each triggers its own alerts
+- Alerts queue and throttle independently per period
+
+### Why Consecutive Closed Periods?
+
+**Why compare consecutive closed periods only?**
 - Binance returns 3 candles: [older_closed, newer_closed, current_incomplete]
-- The incomplete candle [2] has almost no data (e.g., 4K trades vs 135K in complete hours)
-- Comparing to incomplete = unrealistic percentage changes
-- Solution: Use [0] and [1] which are both complete and give realistic comparisons
+- The incomplete candle has almost no data (e.g., 4K trades vs 135K in complete periods)
+- Comparing to incomplete = unrealistic percentage changes (-95% false positives)
+- Solution: Use [0] and [1] which are both complete and complete for realistic comparisons
+
+### Alert Counter Example
+
+**Symbol: BTC, Timeframe: 1h**
+```
+02:15 - Alert #1: -64% volume (counter shows: 1/3) 🔐 Period lock ON
+02:20 - Another -50% detected → BLOCKED (already alerted this hour)
+02:55 - Another +45% detected → BLOCKED (already alerted this hour)
+03:00 - New hour starts → Lock releases, counter resets to 0/3
+03:10 - Alert #1 (new hour): +45% volume (counter shows: 1/3) 🔐 Period lock ON
+```
 
 **Example:**
 - [0] = 75.6M volume (complete hour, 135K trades)
