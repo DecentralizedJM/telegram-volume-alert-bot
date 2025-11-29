@@ -69,6 +69,10 @@ class VolumeAlertBot:
         """Main monitoring loop with command handling"""
         logger.info("Starting volume alert monitoring...")
         
+        # Clear old updates from Telegram queue to avoid processing old messages
+        # Run this in background without blocking
+        asyncio.create_task(self._clear_telegram_queue())
+        
         self.last_update_id = 0
         self.bot_running = True
         
@@ -84,6 +88,28 @@ class VolumeAlertBot:
         except Exception as e:
             logger.error(f"Fatal error: {e}", exc_info=True)
             raise
+    
+    async def _clear_telegram_queue(self):
+        """Clear old messages from Telegram queue on startup"""
+        import requests
+        try:
+            await asyncio.sleep(0.5)  # Small delay to ensure initialization
+            url = f"https://api.telegram.org/bot{self.telegram_token}/getUpdates"
+            # Set a very short timeout to quickly get pending updates
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('ok'):
+                    updates = data.get('result', [])
+                    if updates:
+                        # Set offset to the last update so we skip all pending messages
+                        last_update_id = updates[-1].get('update_id', 0)
+                        self.last_update_id = last_update_id
+                        logger.info(f"✅ Cleared {len(updates)} pending messages from Telegram queue")
+                    else:
+                        logger.info("✅ Queue is clean, no pending messages")
+        except Exception as e:
+            logger.warning(f"Queue clearing: {e}")
     
     async def monitoring_loop(self):
         """Volume monitoring loop"""
@@ -146,6 +172,14 @@ class VolumeAlertBot:
             # Owner's Chat ID
             owner_chat_id = int(os.getenv('TELEGRAM_OWNER_CHAT_ID', '395803228'))
             is_owner = (user_id == owner_chat_id)
+            
+            # Handle private messages (DMs) - Send welcome message
+            if chat_type == 'private':
+                from command_handler import CommandHandler
+                welcome_msg = CommandHandler.get_welcome_message()
+                await self.send_message(chat_id, welcome_msg)
+                logger.info(f"✅ Sent welcome message to user {user_id} ({user_name})")
+                return
             
             # Handle group commands only
             if chat_type in ['group', 'supergroup']:
