@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  volume-alert-bot:
+    build: .
+    container_name: volume-alert-bot
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    restart: unless-stopped
+    networks:
+      - volume-alert-net
+
+networks:
+  volume-alert-net:
+    driver: bridge
