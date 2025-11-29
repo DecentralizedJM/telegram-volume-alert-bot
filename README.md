@@ -12,7 +12,7 @@ Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, an
 - **Independent Timeframe Checking**:
   - **1-Hour**: ±50% volume change detection (max 3 alerts per day per asset)
   - **24-Hour**: ±75% volume change detection (max 1 alert per day per asset)
-- **Period-Based Locking**: Once an alert triggers, it's locked until the next period starts (hourly for 1h, daily for 24h)
+- **Period-Based Locking**: Once an alert triggers, it's locked until the next period starts (resets daily for both timeframes)
 - **Consecutive Period Comparison**: Compares volume between consecutive closed periods
 - **Real-Time Alerts**: Instant Telegram notifications with price and volume data
 - **Owner Control**: Start/stop monitoring with Telegram commands
@@ -106,9 +106,9 @@ Current Configuration:
 
 To prevent alert spam and maintain professional alert delivery, the bot implements a **period-based locking with 10-minute queue system**:
 
-**Alert Limits per Period:**
-- **1-Hour Period**: Maximum 3 alerts per asset per hour (resets hourly)
-- **24-Hour Period**: Maximum 1 alert per asset per day (resets daily)
+**Alert Limits per Day:**
+- **1-Hour Timeframe**: Maximum 3 alerts per asset per day (resets daily at midnight)
+- **24-Hour Timeframe**: Maximum 1 alert per asset per day (resets daily at midnight)
 
 **Queue Spacing Rule: Minimum 10 minutes between alert deliveries**
 
@@ -146,8 +146,8 @@ Once an alert triggers for a symbol/timeframe:
 - **Lock is activated** for that period
 - **No more alerts** can be sent for that symbol/timeframe until the period changes
 - **Period resets** automatically:
-  - **1h**: Every hour (e.g., 2:00 AM, 3:00 AM, 4:00 AM)
-  - **24h**: Every day (e.g., midnight UTC)
+  - **1h**: Daily at midnight UTC (allows up to 3 alerts per day)
+  - **24h**: Daily at midnight UTC (allows up to 1 alert per day)
 
 **Example**:
 - 02:15 AM: BTC 1h alert sent (-64%), lock ON, count 1/3
@@ -204,14 +204,14 @@ The bot independently checks each symbol and timeframe combination to detect sig
 **1-Hour Timeframe (1h)**
 - Compares: Most recent closed hour vs Previous closed hour
 - Threshold: ±50% volume change
-- Max Alerts: 3 per asset per hour (resets at the top of each hour)
+- Max Alerts: 3 per asset per day (resets daily at midnight)
 - Updates: Every 5 minutes with latest market data
 - Example: Hour 1-2 PM has 75M volume, Hour 2-3 PM has 27M volume → -64% alert
 
 **24-Hour Timeframe (24h)**
 - Compares: Most recent closed day vs Previous closed day
 - Threshold: ±75% volume change
-- Max Alerts: 1 per asset per day (resets at midnight UTC)
+- Max Alerts: 1 per asset per day (resets daily at midnight)
 - Updates: Every 5 minutes with latest volume data
 - Example: Day 1 has 2B volume, Day 2 has 525M volume → -73.75% alert
 
@@ -233,18 +233,28 @@ Each symbol × timeframe combination is checked **independently**:
 
 ### Alert Counter Example
 
-**Symbol: BTC, Timeframe: 1h**
+**Symbol: BTC, Timeframe: 1h (Daily Limit)**
 ```
-02:15 - Alert #1: -64% volume (counter shows: 1/3) 🔐 Period lock ON
-02:20 - Another -50% detected → BLOCKED (already alerted this hour)
-02:55 - Another +45% detected → BLOCKED (already alerted this hour)
-03:00 - New hour starts → Lock releases, counter resets to 0/3
-03:10 - Alert #1 (new hour): +45% volume (counter shows: 1/3) 🔐 Period lock ON
+Day 1 - 02:15 AM - Alert #1: -64% volume (counter shows: 1/3) 🔐 Lock ON
+Day 1 - 02:20 AM - Another -50% detected → BLOCKED (already alerted today)
+Day 1 - 02:55 AM - Another +45% detected → BLOCKED (already alerted today)
+Day 1 - 23:59 PM - Still blocked, still at 1/3 alerts for the day
+Day 2 - 00:00 AM - New day starts → Lock releases, counter resets to 0/3
+Day 2 - 01:05 AM - Alert #1 (new day): +45% volume (counter shows: 1/3) 🔐 Lock ON
 ```
 
-**Example:**
-- [0] = 75.6M volume (complete hour, 135K trades)
-- [1] = 27.0M volume (complete hour, 61K trades)
+**Symbol: ETH, Timeframe: 24h (Daily Limit)**
+```
+Day 1 - 14:30 - Alert #1: +85% volume (counter shows: 1/1) 🔐 Lock ON
+Day 1 - 15:00 - Another +75% detected → BLOCKED (daily limit reached)
+Day 1 - 23:59 - Still blocked, still at 1/1 alert for the day
+Day 2 - 00:00 - New day starts → Lock releases, counter resets to 0/1
+Day 2 - 08:20 - Alert #1 (new day): -80% volume (counter shows: 1/1) 🔐 Lock ON
+```
+
+**Example Candle Data:**
+- [0] = 75.6M volume (complete period, 135K trades)
+- [1] = 27.0M volume (complete period, 61K trades)
 - [2] = 0.7M volume (incomplete, only 4.3K trades) ← Skip this!
 
 Change [1] vs [0] = -64.21% ✓ (realistic)
@@ -256,48 +266,11 @@ Change [2] vs [1] = -97.40% ✗ (unrealistic, incomplete data)
 Volume Change % = ((Current Closed Volume - Previous Closed Volume) / Previous Closed Volume) × 100
 
 Alert Triggers When:
-- BOTH conditions required:
-  - 1h:  |Volume Change %| ≥ 50%  AND
-  - 24h: |Volume Change %| ≥ 75%
+- 1h:  |Volume Change %| ≥ 50%  (max 3 alerts per day per asset)
+- 24h: |Volume Change %| ≥ 75% (max 1 alert per day per asset)
 ```
 
-### Dual-Timeframe Requirement
-
-🎯 **Alerts ONLY trigger when BOTH 1-hour AND 24-hour conditions are met simultaneously**
-
-This dual-validation approach ensures:
-- ✅ **Higher Accuracy**: Filters out noise from single timeframe anomalies
-- ✅ **Confirms Trend**: Both short-term (1h) and long-term (24h) data align
-- ✅ **Reduces False Positives**: Prevents alerts on isolated spikes
-- ✅ **Meaningful Moves Only**: Only significant market-wide volume shifts trigger alerts
-
-**Example Scenarios:**
-
-| 1h Change | 24h Change | Alert Sent? | Reason |
-|-----------|-----------|-----------|--------|
-| +60% | +85% | ✅ Yes | Both conditions met |
-| +60% | +40% | ❌ No | 24h too low (needs ±75%) |
-| +40% | +85% | ❌ No | 1h too low (needs ±50%) |
-| -52% | -77% | ✅ Yes | Both conditions met (negative) |
-
-When both conditions are met, a **combined alert** is sent showing both metrics in a single message.
-
----
-
-### Independent Per-Asset Alerting
-
-✅ **Each asset checks independently and alerts when it crosses the threshold:**
-
-Example Timeline (every 5-minute check):
-- **1:00 PM** - New hour closes. Bot now compares 12-1 PM (75M) vs 1-2 PM (27M)
-- **1:05 PM** - Check 1: BTC -64% ≥ ±30% → **BTC Alert sent**
-- **1:10 PM** - Check 2: BTC still -64% (same closed hour) → No duplicate
-- **1:15 PM** - Check 3: ETH -73% ≥ ±30% → **ETH Alert sent** (independent)
-- **1:20 PM** - Check 4: SOL -66% ≥ ±30% → **SOL Alert sent** (independent)
-- **2:00 PM** - New hour closes. State resets for next comparison
-- **2:00 PM** - New hour starts, state resets
-
-**Key Point**: Each asset alerts **independently** when it crosses the threshold. You won't get batched alerts for all three together.
+Each timeframe is checked **independently**. No "dual requirement" - each alert triggers separately.
 
 ---
 
