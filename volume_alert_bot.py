@@ -52,12 +52,26 @@ class VolumeAlertBot:
         self.check_interval = VolumeAlertConfig.CHECK_INTERVAL
         self.max_alerts_per_symbol = VolumeAlertConfig.MAX_ALERTS_PER_SYMBOL
         
-        # Track alerts sent per symbol (resets every cycle)
-        # Format: {"BTCUSDT": 2, "ETHUSDT": 1, "SOLUSDT": 0}
-        self.alerts_sent_this_cycle = {symbol: 0 for symbol in self.symbols}
+        # Alert tracking per symbol per timeframe per day
+        # Format: {
+        #   "BTCUSDT": {
+        #     "1h": {"count": 2, "last_reset": "2025-11-30", "locked": False},
+        #     "24h": {"count": 1, "last_reset": "2025-11-30", "locked": False}
+        #   }
+        # }
+        self.alert_tracking = {
+            symbol: {
+                timeframe: {
+                    "count": 0,
+                    "last_reset": self._get_period_key(timeframe),
+                    "locked": False
+                }
+                for timeframe in self.timeframes.keys()
+            }
+            for symbol in self.symbols
+        }
         
         # Alert queue system: Track last alert timestamp to enforce 10-min gap
-        # Format: timestamp of last alert sent (any symbol)
         self.last_alert_timestamp = 0
         self.alert_queue_gap = VolumeAlertConfig.ALERT_QUEUE_GAP_SECONDS  # 600 seconds (10 minutes)
         
@@ -276,127 +290,163 @@ class VolumeAlertBot:
             return False
     
     async def check_all_volumes(self):
-        """Check volume for all symbols and timeframes
+        """Check volume for all symbols and timeframes INDEPENDENTLY
         
         Strategy:
-        1. Check BOTH 1h AND 24h for each symbol
-        2. Only send alert if BOTH conditions are met
-        3. Cap alerts per symbol at 3 per cycle
+        1. Check each timeframe independently (not dual requirement)
+        2. 1h: ±50% threshold, max 3 alerts per day per asset
+        3. 24h: ±75% threshold, max 1 alert per day per asset
+        4. Once alert triggers for a period, lock until next period
         """
         # Only run if bot is active
         if not self.bot_running:
             logger.debug("⏸️ Bot is paused, skipping volume check")
             return
         
-        # Reset alert counters for this cycle
-        self.alerts_sent_this_cycle = {symbol: 0 for symbol in self.symbols}
+        # Reset daily counts if needed (check period boundaries)
+        self._reset_daily_counts()
         
         tasks = []
         
-        # Check each symbol (requires BOTH 1h and 24h conditions)
+        # Check each symbol on each timeframe INDEPENDENTLY
         for symbol in self.symbols:
-            tasks.append(self.check_symbol_dual_timeframe(symbol))
+            for timeframe in self.timeframes.keys():
+                tasks.append(self.check_symbol_timeframe(symbol, timeframe))
         
         # Run all checks concurrently
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
     
-    async def check_symbol_dual_timeframe(self, symbol: str):
-        """Check BOTH 1h and 24h for a symbol
+    def _get_period_key(self, timeframe: str) -> str:
+        """Get the current period key for a timeframe
         
-        ONLY sends alert if BOTH conditions are met:
-        - 1h volume change >= ±50%
-        - 24h volume change >= ±75%
+        1h: YYYY-MM-DD-HH (resets each hour)
+        24h: YYYY-MM-DD (resets each day)
+        """
+        now = datetime.now()
+        if timeframe == "1h":
+            return now.strftime("%Y-%m-%d-%H")
+        else:  # 24h
+            return now.strftime("%Y-%m-%d")
+    
+    def _reset_daily_counts(self):
+        """Reset alert counters when period boundaries are crossed"""
+        for symbol in self.symbols:
+            for timeframe in self.timeframes.keys():
+                current_period = self._get_period_key(timeframe)
+                last_period = self.alert_tracking[symbol][timeframe]["last_reset"]
+                
+                # If period changed, reset counter and lock
+                if current_period != last_period:
+                    self.alert_tracking[symbol][timeframe]["count"] = 0
+                    self.alert_tracking[symbol][timeframe]["locked"] = False
+                    self.alert_tracking[symbol][timeframe]["last_reset"] = current_period
+                    logger.debug(f"🔄 Reset counters for {symbol} {timeframe} (new period: {current_period})")
+    
+    async def check_symbol_timeframe(self, symbol: str, timeframe: str):
+        """Check a single symbol on a single timeframe INDEPENDENTLY
         
-        If both conditions met, combines into single alert message
+        Rules:
+        - 1h: ±50% threshold, max 3 alerts per day
+        - 24h: ±75% threshold, max 1 alert per day
+        - Once alert triggers, lock until next period
         """
         try:
-            # Check 1-hour timeframe
-            result_1h = self.fetcher.get_current_and_previous(symbol, "1h")
-            if not result_1h:
+            # Get the max alerts for this timeframe
+            max_alerts = 3 if timeframe == "1h" else 1
+            
+            # Check if already locked for this period
+            tracking = self.alert_tracking[symbol][timeframe]
+            if tracking["locked"]:
+                logger.debug(f"🔒 {symbol} {timeframe} locked - already alerted this period")
                 return
             
-            previous_1h, current_1h = result_1h
-            alert_1h = self.detector.detect_volume_alert(current_1h, previous_1h)
-            
-            # Check 24-hour timeframe
-            result_24h = self.fetcher.get_current_and_previous(symbol, "24h")
-            if not result_24h:
+            # Get current and previous candle volumes
+            result = self.fetcher.get_current_and_previous(symbol, timeframe)
+            if not result:
+                logger.debug(f"⚠️ {symbol} {timeframe}: No data from Binance")
                 return
             
-            previous_24h, current_24h = result_24h
-            alert_24h = self.detector.detect_volume_alert(current_24h, previous_24h)
+            previous_candle, current_candle = result
             
-            # ONLY send if BOTH 1h AND 24h conditions are met
-            if alert_1h and alert_24h:
-                # Combine both alerts into one message
-                combined_alert = {
-                    "symbol": symbol,
-                    "volume_change_pct_1h": alert_1h["volume_change_pct"],
-                    "volume_change_pct_24h": alert_24h["volume_change_pct"],
-                    "type_1h": alert_1h["type"],
-                    "type_24h": alert_24h["type"],
-                    "current_price": current_1h.get("close", 0),
-                    "timestamp": datetime.now().isoformat(),
-                    "open_time": current_1h["open_time"]  # For deduplication
-                }
-                
-                # Check if we can send more alerts for this symbol
-                if self.alerts_sent_this_cycle[symbol] < self.max_alerts_per_symbol:
-                    current_time = time.time()
-                    time_since_last = current_time - self.last_alert_timestamp
+            # Get the threshold for this timeframe
+            threshold = VolumeAlertConfig.VOLUME_THRESHOLDS.get(timeframe, 50)
+            
+            # Calculate volume change
+            prev_volume = previous_candle.get("volume", 0)
+            curr_volume = current_candle.get("volume", 0)
+            
+            if prev_volume == 0:
+                return
+            
+            volume_change_pct = ((curr_volume - prev_volume) / prev_volume) * 100
+            
+            # Check if threshold is met
+            if abs(volume_change_pct) >= threshold:
+                # Threshold met! Check if we can send alert
+                if tracking["count"] < max_alerts:
+                    # Send the alert
+                    alert = {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "volume_change_pct": volume_change_pct,
+                        "current_price": current_candle.get("close", 0),
+                        "timestamp": datetime.now().isoformat()
+                    }
                     
-                    # If last alert was < 10 min ago, queue this alert
-                    if time_since_last < self.alert_queue_gap and self.last_alert_timestamp > 0:
-                        self.pending_alerts.append((current_time, combined_alert))
-                        wait_time = self.alert_queue_gap - time_since_last
-                        logger.info(f"📥 Alert QUEUED for {symbol}: 1h {alert_1h['volume_change_pct']:+.2f}% + "
-                                   f"24h {alert_24h['volume_change_pct']:+.2f}% "
-                                   f"(will send in {wait_time:.0f}s, queue size: {len(self.pending_alerts)})")
-                    else:
-                        # Send immediately (first alert or enough time has passed)
-                        await self.send_combined_alert(combined_alert)
-                        self.last_alert_timestamp = current_time
-                        self.alerts_sent_this_cycle[symbol] += 1
-                        logger.info(f"📤 Alert sent for {symbol}: 1h {alert_1h['volume_change_pct']:+.2f}% + "
-                                   f"24h {alert_24h['volume_change_pct']:+.2f}% "
-                                   f"({self.alerts_sent_this_cycle[symbol]}/{self.max_alerts_per_symbol})")
+                    # Queue or send the alert
+                    await self._queue_or_send_alert(alert, symbol, timeframe, max_alerts)
                 else:
-                    logger.debug(f"⚠️ Max alerts reached for {symbol} this cycle ({self.max_alerts_per_symbol})")
+                    logger.info(f"⚠️ {symbol} {timeframe}: Max alerts ({max_alerts}) reached for period")
             else:
-                # Log when conditions are NOT met (for debugging)
-                if alert_1h:
-                    pct_1h = alert_1h.get('volume_change_pct', 0) if isinstance(alert_1h, dict) else 0
-                    pct_24h = alert_24h.get('volume_change_pct', 0) if isinstance(alert_24h, dict) else 0
-                    logger.debug(f"⏭️ {symbol}: 1h {pct_1h:+.1f}% (meets), 24h {pct_24h:+.1f}% (no meet)")
-                elif alert_24h:
-                    pct_1h = alert_1h.get('volume_change_pct', 0) if isinstance(alert_1h, dict) else 0
-                    pct_24h = alert_24h.get('volume_change_pct', 0) if isinstance(alert_24h, dict) else 0
-                    logger.debug(f"⏭️ {symbol}: 1h {pct_1h:+.1f}% (no meet), 24h {pct_24h:+.1f}% (meets)")
+                logger.debug(f"⏭️ {symbol} {timeframe}: {volume_change_pct:+.1f}% (need {threshold:+.0f}%)")
         
         except Exception as e:
-            logger.error(f"Error checking {symbol}: {e}")
+            logger.error(f"Error checking {symbol} {timeframe}: {e}")
     
-    async def send_combined_alert(self, alert: dict):
-        """Send combined 1h + 24h alert to Telegram"""
+    async def _queue_or_send_alert(self, alert: dict, symbol: str, timeframe: str, max_alerts: int):
+        """Queue alert if within 10-min gap, otherwise send immediately"""
+        current_time = time.time()
+        time_since_last = current_time - self.last_alert_timestamp
+        
+        # If last alert was < 10 min ago, queue this alert
+        if time_since_last < self.alert_queue_gap and self.last_alert_timestamp > 0:
+            self.pending_alerts.append((current_time, alert))
+            wait_time = self.alert_queue_gap - time_since_last
+            logger.info(f"📥 Alert QUEUED for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
+                       f"(will send in {wait_time:.0f}s, queue size: {len(self.pending_alerts)})")
+        else:
+            # Send immediately
+            await self.send_alert_formatted(alert)
+            self.last_alert_timestamp = current_time
+            
+            # Mark as alerted for this period
+            self.alert_tracking[symbol][timeframe]["count"] += 1
+            self.alert_tracking[symbol][timeframe]["locked"] = True
+            
+            logger.info(f"📤 Alert sent for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
+                       f"({self.alert_tracking[symbol][timeframe]['count']}/{max_alerts})")
+    
+    async def send_alert_formatted(self, alert: dict):
+        """Send formatted alert to Telegram"""
         try:
-            # Format combined alert message
+            # Determine emoji based on direction
+            direction_emoji = "📈" if alert['volume_change_pct'] > 0 else "📉"
+            direction_text = "INCREASE" if alert['volume_change_pct'] > 0 else "DECREASE"
+            
             message = (
-                f"🚨 {alert['symbol']} VOLUME ALERT\n\n"
-                f"💹 Current Price: ${alert['current_price']:,.2f}\n\n"
-                f"⏱️ <b>1-Hour Change:</b>\n"
-                f"📊 {alert['volume_change_pct_1h']:+.2f}%\n"
-                f"{'📈 INCREASE' if alert['volume_change_pct_1h'] > 0 else '📉 DECREASE'}\n\n"
-                f"<b>24-Hour Change:</b>\n"
-                f"📊 {alert['volume_change_pct_24h']:+.2f}%\n"
-                f"{'📈 INCREASE' if alert['volume_change_pct_24h'] > 0 else '📉 DECREASE'}"
+                f"🚨 {alert['symbol']} VOLUME ALERT {direction_emoji}\n\n"
+                f"⏱️ Timeframe: {alert['timeframe']}\n"
+                f"💹 Current Price: ${alert['current_price']:,.2f}\n"
+                f"📊 Volume Change: {alert['volume_change_pct']:+.2f}%\n\n"
+                f"⚠️ {direction_text} VOLUME DETECTED"
             )
             
             await self.telegram.send_alert_message(message)
-            logger.info(f"✅ Combined alert sent for {alert['symbol']}")
+            logger.info(f"✅ Alert sent for {alert['symbol']} {alert['timeframe']}")
             return True
         except Exception as e:
-            logger.error(f"Error sending combined alert: {e}")
+            logger.error(f"Error sending alert: {e}")
             return False
     
     def test_telegram(self):
