@@ -9,9 +9,11 @@ Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, an
 ## Features
 
 - **Multi-Asset Monitoring**: BTC, ETH, SOL (easily extensible to other assets)
-- **Dual Timeframe Monitoring**: 
-  - **1-Hour**: ±30% volume change detection
-  - **24-Hour**: ±50% volume change detection (rolling window)
+- **Dual Timeframe Monitoring** (BOTH required):
+  - **1-Hour**: ±50% volume change detection
+  - **24-Hour**: ±75% volume change detection (rolling window)
+- **Dual-Timeframe Requirement**: Only alerts when BOTH conditions are triggered simultaneously for high accuracy
+- **Higher Thresholds**: Reduced from 30%/50% to 50%/75% to minimize false positives
 - **Consecutive Period Comparison**: Compares volume between consecutive periods (not fixed baselines)
 - **Real-Time Alerts**: Instant Telegram notifications with price and volume data
 - **Owner Control**: Start/stop monitoring with Telegram commands
@@ -159,8 +161,8 @@ TIMEFRAMES = {
 
 # Volume change thresholds (%) by timeframe
 VOLUME_THRESHOLDS = {
-    "1h": 30,       # Alert on ±30% hourly volume change
-    "24h": 50       # Alert on ±50% 24h rolling window change
+    "1h": 50,       # Alert on ±50% hourly volume change
+    "24h": 75       # Alert on ±75% 24h rolling window change
 }
 
 # Check interval in seconds (5 minutes)
@@ -211,9 +213,33 @@ Change [2] vs [1] = -97.40% ✗ (unrealistic, incomplete data)
 Volume Change % = ((Current Closed Volume - Previous Closed Volume) / Previous Closed Volume) × 100
 
 Alert Triggers When:
-- 1h:  |Volume Change %| ≥ 30%
-- 24h: |Volume Change %| ≥ 50%
+- BOTH conditions required:
+  - 1h:  |Volume Change %| ≥ 50%  AND
+  - 24h: |Volume Change %| ≥ 75%
 ```
+
+### Dual-Timeframe Requirement
+
+🎯 **Alerts ONLY trigger when BOTH 1-hour AND 24-hour conditions are met simultaneously**
+
+This dual-validation approach ensures:
+- ✅ **Higher Accuracy**: Filters out noise from single timeframe anomalies
+- ✅ **Confirms Trend**: Both short-term (1h) and long-term (24h) data align
+- ✅ **Reduces False Positives**: Prevents alerts on isolated spikes
+- ✅ **Meaningful Moves Only**: Only significant market-wide volume shifts trigger alerts
+
+**Example Scenarios:**
+
+| 1h Change | 24h Change | Alert Sent? | Reason |
+|-----------|-----------|-----------|--------|
+| +60% | +85% | ✅ Yes | Both conditions met |
+| +60% | +40% | ❌ No | 24h too low (needs ±75%) |
+| +40% | +85% | ❌ No | 1h too low (needs ±50%) |
+| -52% | -77% | ✅ Yes | Both conditions met (negative) |
+
+When both conditions are met, a **combined alert** is sent showing both metrics in a single message.
+
+---
 
 ### Independent Per-Asset Alerting
 
