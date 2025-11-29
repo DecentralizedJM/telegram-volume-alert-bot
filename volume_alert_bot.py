@@ -171,15 +171,34 @@ class VolumeAlertBot:
                 
                 # Check if any pending alerts are ready to send (gap elapsed)
                 if self.pending_alerts:
-                    alert_timestamp, alert = self.pending_alerts[0]
+                    alert_timestamp, alert, symbol, timeframe, max_alerts = self.pending_alerts[0]
                     time_since_last = current_time - self.last_alert_timestamp
                     
                     # If 10 minutes have passed since last alert, send the next one
                     if time_since_last >= self.alert_queue_gap:
                         self.pending_alerts.pop(0)  # Remove from queue
-                        await self.telegram.send_alert(alert)
+                        
+                        # Format and send the alert
+                        direction_emoji = "📈" if alert['volume_change_pct'] > 0 else "📉"
+                        direction_text = "INCREASE" if alert['volume_change_pct'] > 0 else "DECREASE"
+                        
+                        message = (
+                            f"🚨 {alert['symbol']} VOLUME ALERT {direction_emoji}\n\n"
+                            f"⏱️ Timeframe: {alert['timeframe']}\n"
+                            f"💹 Current Price: ${alert['current_price']:,.2f}\n"
+                            f"📊 Volume Change: {alert['volume_change_pct']:+.2f}%\n\n"
+                            f"⚠️ {direction_text} VOLUME DETECTED"
+                        )
+                        
+                        await self.telegram.send_alert_message(message)
                         self.last_alert_timestamp = current_time
-                        logger.info(f"📤 Queued alert sent for {alert['symbol']} (queue size: {len(self.pending_alerts)})")
+                        
+                        # Update tracking for this symbol/timeframe
+                        self.alert_tracking[symbol][timeframe]["count"] += 1
+                        self.alert_tracking[symbol][timeframe]["locked"] = True
+                        
+                        logger.info(f"📤 Queued alert sent for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
+                                   f"({self.alert_tracking[symbol][timeframe]['count']}/{max_alerts}, queue size: {len(self.pending_alerts)})")
                 
                 await asyncio.sleep(10)  # Check queue every 10 seconds
             except Exception as e:
@@ -411,8 +430,14 @@ class VolumeAlertBot:
         
         # If last alert was < 10 min ago, queue this alert
         if time_since_last < self.alert_queue_gap and self.last_alert_timestamp > 0:
-            self.pending_alerts.append((current_time, alert))
+            # Queue includes: (timestamp, alert_dict, symbol, timeframe, max_alerts)
+            self.pending_alerts.append((current_time, alert, symbol, timeframe, max_alerts))
             wait_time = self.alert_queue_gap - time_since_last
+            
+            # Mark as alerted immediately to prevent duplicate queuing
+            self.alert_tracking[symbol][timeframe]["count"] += 1
+            self.alert_tracking[symbol][timeframe]["locked"] = True
+            
             logger.info(f"📥 Alert QUEUED for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
                        f"(will send in {wait_time:.0f}s, queue size: {len(self.pending_alerts)})")
         else:
