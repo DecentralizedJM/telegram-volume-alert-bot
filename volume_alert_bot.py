@@ -102,8 +102,8 @@ class VolumeAlertBot:
         logger.info("Starting volume alert monitoring...")
         
         # Clear old updates from Telegram queue to avoid processing old messages
-        # Run this in background without blocking
-        asyncio.create_task(self._clear_telegram_queue())
+        # MUST block here to prevent duplicate command processing
+        await self._clear_telegram_queue()
         
         self.last_update_id = 0
         self.bot_running = True
@@ -138,9 +138,10 @@ class VolumeAlertBot:
                         # Set offset to the last update so we skip all pending messages
                         last_update_id = updates[-1].get('update_id', 0)
                         self.last_update_id = last_update_id
-                        logger.info(f"✅ Cleared {len(updates)} pending messages from Telegram queue")
+                        logger.info(f"🧹 Cleared {len(updates)} pending messages from Telegram queue (last_update_id: {last_update_id})")
+                        logger.debug(f"Queue messages: {[u.get('update_id') for u in updates]}")
                     else:
-                        logger.info("✅ Queue is clean, no pending messages")
+                        logger.info("🧹 Queue is clean, no pending messages")
         except Exception as e:
             logger.warning(f"Queue clearing: {e}")
     
@@ -400,6 +401,11 @@ class VolumeAlertBot:
             # BUG FIX #1: Check if this candle already triggered an alert
             tracking = self.alert_tracking[symbol][timeframe]
             current_open_time = current_candle.get("open_time")
+            
+            # DEBUG: Log the dedup check details
+            logger.debug(f"[DEDUP] {symbol} {timeframe}: current_open_time={current_open_time}, "
+                        f"last_alerted_open_time={tracking['last_alerted_open_time']}")
+            
             if current_open_time == tracking["last_alerted_open_time"]:
                 logger.debug(f"✓ {symbol} {timeframe}: Already alerted for this candle (open_time={current_open_time})")
                 return
@@ -523,6 +529,8 @@ class VolumeAlertBot:
             if os.path.exists(tracking_file):
                 with open(tracking_file, 'r') as f:
                     saved_tracking = json.load(f)
+                    logger.debug(f"📂 Loaded saved tracking: {json.dumps(saved_tracking, indent=2)}")
+                    
                     # Merge saved tracking with current (to preserve new symbols/timeframes)
                     for symbol in self.alert_tracking:
                         if symbol in saved_tracking:
@@ -535,7 +543,9 @@ class VolumeAlertBot:
                                     if current_period == saved_period:
                                         # Same period - load the tracking
                                         self.alert_tracking[symbol][timeframe] = saved_tracking[symbol][timeframe]
-                                        logger.debug(f"✓ Loaded tracking for {symbol} {timeframe}")
+                                        logger.debug(f"✓ Loaded tracking for {symbol} {timeframe}: "
+                                                   f"count={self.alert_tracking[symbol][timeframe]['count']}, "
+                                                   f"last_alerted_open_time={self.alert_tracking[symbol][timeframe]['last_alerted_open_time']}")
                 logger.info("✅ Alert tracking loaded from disk")
         except Exception as e:
             logger.warning(f"Could not load alert tracking: {e}")
