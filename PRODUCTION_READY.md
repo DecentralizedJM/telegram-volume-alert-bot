@@ -92,7 +92,7 @@ For the official Mudrex group with topic 52310:
 
 **.env configuration:**
 ```env
-TELEGRAM_BOT_TOKEN=8218195916:AAHyIUlDSc4GvA0gXXN4Mklu2qTIxWAGdtM
+TELEGRAM_BOT_TOKEN=<your-telegram-bot-token-here>
 TELEGRAM_CHAT_ID=-1003269114897
 TELEGRAM_OWNER_CHAT_ID=395803228
 TELEGRAM_TOPIC_ID=52310

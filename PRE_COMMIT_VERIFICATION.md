@@ -125,7 +125,7 @@ def send_message(self, chat_id: int, text: str, topic_id: Optional[int] = None):
 
 ### Configuration for Topic 52310
 ```env
-TELEGRAM_BOT_TOKEN=8218195916:AAHyIUlDSc4GvA0gXXN4Mklu2qTIxWAGdtM
+TELEGRAM_BOT_TOKEN=<your-telegram-bot-token-here>
 TELEGRAM_CHAT_ID=-1003269114897
 TELEGRAM_OWNER_CHAT_ID=395803228
 TELEGRAM_TOPIC_ID=52310
