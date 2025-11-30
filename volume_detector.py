@@ -72,7 +72,7 @@ class VolumeDetector:
             # Check if we already sent alert for this candle/period
             if self._should_alert(alert):
                 self._save_state(alert)
-                logger.info(f"Volume alert: {alert['symbol']} {interval} {volume_change_pct:+.2f}% (threshold: ±{threshold}%)")
+                logger.info(f"🔔 Volume Spike Detected: {alert['symbol']} {interval} {volume_change_pct:+.2f}% (threshold: ±{threshold}%)")
                 return alert
         
         return None
