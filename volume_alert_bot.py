@@ -123,25 +123,50 @@ class VolumeAlertBot:
             raise
     
     async def _clear_telegram_queue(self):
-        """Clear old messages from Telegram queue on startup"""
+        """Clear old messages from Telegram queue on startup
+        
+        We fetch updates but don't process them - this tells Telegram we've seen them.
+        By calling getUpdates multiple times, we advance the internal Telegram queue cursor.
+        """
         import requests
         try:
             await asyncio.sleep(0.5)  # Small delay to ensure initialization
             url = f"https://api.telegram.org/bot{self.telegram_token}/getUpdates"
-            # Set a very short timeout to quickly get pending updates
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('ok'):
-                    updates = data.get('result', [])
-                    if updates:
-                        # Set offset to the last update so we skip all pending messages
+            
+            # Fetch updates in a loop to clear the queue
+            # Each fetch tells Telegram we've processed up to that point
+            max_iterations = 3
+            iteration = 0
+            
+            while iteration < max_iterations:
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('ok'):
+                        updates = data.get('result', [])
+                        if not updates:
+                            logger.info("🧹 Queue is clean, no pending messages")
+                            break
+                        
+                        # Fetch updates with offset to confirm we've seen them
+                        # This advances Telegram's internal cursor
                         last_update_id = updates[-1].get('update_id', 0)
-                        self.last_update_id = last_update_id
-                        logger.info(f"🧹 Cleared {len(updates)} pending messages from Telegram queue (last_update_id: {last_update_id})")
-                        logger.debug(f"Queue messages: {[u.get('update_id') for u in updates]}")
+                        response = requests.get(
+                            url,
+                            params={"offset": last_update_id + 1, "timeout": 1},
+                            timeout=5
+                        )
+                        logger.info(f"🧹 Cleared {len(updates)} old messages from queue")
+                        iteration += 1
                     else:
-                        logger.info("🧹 Queue is clean, no pending messages")
+                        break
+                else:
+                    break
+                    
+            # Keep last_update_id at 0 so next fetch gets all new updates
+            # The queue clearing above has already told Telegram we've seen the old ones
+            logger.info(f"🧹 Queue cleared after {iteration} iteration(s), ready for new messages")
+            
         except Exception as e:
             logger.warning(f"Queue clearing: {e}")
     
