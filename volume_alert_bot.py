@@ -198,7 +198,7 @@ class VolumeAlertBot:
                             f"⏱️ Timeframe: {alert['timeframe']}\n"
                             f"💹 Current Price: ${alert['current_price']:,.2f}\n"
                             f"📊 Volume Change: {alert['volume_change_pct']:+.2f}%\n\n"
-                            f"⚠️ {direction_text} SPIKE DETECTED"
+                            f"⚠️ Volume Spike Detected"
                         )
                         
                         await self.telegram.send_alert_message(message)
@@ -484,7 +484,7 @@ class VolumeAlertBot:
                 f"⏱️ Timeframe: {alert['timeframe']}\n"
                 f"💹 Current Price: ${alert['current_price']:,.2f}\n"
                 f"📊 Volume Change: {alert['volume_change_pct']:+.2f}%\n\n"
-                f"⚠️ {direction_text} SPIKE DETECTED"
+                f"⚠️ Volume Spike Detected"
             )
             
             await self.telegram.send_alert_message(message)
