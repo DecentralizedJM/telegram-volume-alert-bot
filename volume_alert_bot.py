@@ -590,8 +590,16 @@ class VolumeAlertBot:
                                     saved_period = saved_tracking[symbol][timeframe].get("last_reset")
                                     
                                     if current_period == saved_period:
-                                        # Same period - load the tracking
-                                        self.alert_tracking[symbol][timeframe] = saved_tracking[symbol][timeframe]
+                                        # Same period - load the tracking but preserve new fields
+                                        saved_data = saved_tracking[symbol][timeframe]
+                                        # Update only the old fields, keep the new ones from initialization
+                                        self.alert_tracking[symbol][timeframe]["count"] = saved_data.get("count", 0)
+                                        self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = saved_data.get("last_alerted_open_time")
+                                        self.alert_tracking[symbol][timeframe]["last_reset"] = saved_data.get("last_reset", current_period)
+                                        # Preserve new fields from initialization if not in saved data
+                                        if "last_alert_timestamp" in saved_data:
+                                            self.alert_tracking[symbol][timeframe]["last_alert_timestamp"] = saved_data["last_alert_timestamp"]
+                                        # cooldown_seconds stays from initialization
                                         logger.debug(f"✓ Loaded tracking for {symbol} {timeframe}: "
                                                    f"count={self.alert_tracking[symbol][timeframe]['count']}, "
                                                    f"last_alerted_open_time={self.alert_tracking[symbol][timeframe]['last_alerted_open_time']}")
