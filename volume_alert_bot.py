@@ -176,8 +176,10 @@ class VolumeAlertBot:
     
     async def monitoring_loop(self):
         """Volume monitoring loop"""
+        logger.info("📊 Monitoring loop started")
         while self.bot_running:
             try:
+                logger.debug("Checking all volumes...")
                 await self.check_all_volumes()
                 await asyncio.sleep(self.check_interval)
             except Exception as e:
@@ -367,6 +369,8 @@ class VolumeAlertBot:
         if not self.bot_running:
             logger.debug("⏸️ Bot is paused, skipping volume check")
             return
+        
+        logger.debug(f"🔍 Checking volumes for {len(self.symbols)} symbols...")
         
         # Reset daily counts if needed (check period boundaries)
         self._reset_daily_counts()
