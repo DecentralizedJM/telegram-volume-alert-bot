@@ -76,6 +76,9 @@ class VolumeAlertBot:
             for symbol in self.symbols
         }
         
+        # Load persisted alert tracking
+        self._load_alert_tracking()
+        
         # Alert queue system: Track last alert timestamp to enforce 10-min gap
         self.last_alert_timestamp = 0
         self.alert_queue_gap = VolumeAlertConfig.ALERT_QUEUE_GAP_SECONDS  # 600 seconds (10 minutes)
@@ -207,6 +210,7 @@ class VolumeAlertBot:
                         # BUG FIX #5: Update tracking - count already incremented when queued
                         # Just update last_alerted_open_time
                         self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = open_time
+                        self._save_alert_tracking()
                         
                         logger.info(f"📤 Queued alert sent for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
                                    f"({self.alert_tracking[symbol][timeframe]['count']}/{max_alerts}, queue size: {len(self.pending_alerts)})")
@@ -457,6 +461,7 @@ class VolumeAlertBot:
             # BUG FIX #2: Increment count but DON'T set locked=True
             self.alert_tracking[symbol][timeframe]["count"] += 1
             self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = open_time
+            self._save_alert_tracking()
             
             logger.info(f"📥 Alert QUEUED for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
                        f"(will send in {wait_time:.0f}s, queue size: {len(self.pending_alerts)})")
@@ -468,6 +473,7 @@ class VolumeAlertBot:
             # BUG FIX #2: Mark as alerted without locked flag
             self.alert_tracking[symbol][timeframe]["count"] += 1
             self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = open_time
+            self._save_alert_tracking()
             
             logger.info(f"📤 Alert sent for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
                        f"({self.alert_tracking[symbol][timeframe]['count']}/{max_alerts})")
@@ -507,6 +513,45 @@ class VolumeAlertBot:
         except Exception as e:
             logger.error(f"❌ Telegram test failed: {e}")
             return False
+    
+    def _load_alert_tracking(self):
+        """Load persisted alert tracking from file"""
+        import json
+        import os
+        tracking_file = "data/alert_tracking.json"
+        try:
+            if os.path.exists(tracking_file):
+                with open(tracking_file, 'r') as f:
+                    saved_tracking = json.load(f)
+                    # Merge saved tracking with current (to preserve new symbols/timeframes)
+                    for symbol in self.alert_tracking:
+                        if symbol in saved_tracking:
+                            for timeframe in self.alert_tracking[symbol]:
+                                if timeframe in saved_tracking[symbol]:
+                                    # Check if period is still today
+                                    current_period = self._get_period_key(timeframe)
+                                    saved_period = saved_tracking[symbol][timeframe].get("last_reset")
+                                    
+                                    if current_period == saved_period:
+                                        # Same period - load the tracking
+                                        self.alert_tracking[symbol][timeframe] = saved_tracking[symbol][timeframe]
+                                        logger.debug(f"✓ Loaded tracking for {symbol} {timeframe}")
+                logger.info("✅ Alert tracking loaded from disk")
+        except Exception as e:
+            logger.warning(f"Could not load alert tracking: {e}")
+    
+    def _save_alert_tracking(self):
+        """Save alert tracking to file for persistence"""
+        import json
+        import os
+        tracking_file = "data/alert_tracking.json"
+        try:
+            os.makedirs("data", exist_ok=True)
+            with open(tracking_file, 'w') as f:
+                json.dump(self.alert_tracking, f, indent=2)
+            logger.debug("✓ Alert tracking saved to disk")
+        except Exception as e:
+            logger.warning(f"Could not save alert tracking: {e}")
 
 async def main():
     """Entry point"""
