@@ -35,6 +35,7 @@ class VolumeAlertBot:
         # Check environment
         self.telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        self.telegram_topic_id = os.getenv("TELEGRAM_TOPIC_ID")  # Optional topic ID
         
         if not self.telegram_token or not self.telegram_chat_id:
             logger.error("Missing Telegram credentials in .env file")
@@ -44,7 +45,11 @@ class VolumeAlertBot:
         # Initialize components
         self.fetcher = BinanceDataFetcher()
         self.detector = VolumeDetector()
-        self.telegram = TelegramClient(self.telegram_token, self.telegram_chat_id)
+        self.telegram = TelegramClient(
+            self.telegram_token,
+            self.telegram_chat_id,
+            topic_id=int(self.telegram_topic_id) if self.telegram_topic_id else None
+        )
         
         # Configuration
         self.symbols = VolumeAlertConfig.SYMBOLS
@@ -55,8 +60,8 @@ class VolumeAlertBot:
         # Alert tracking per symbol per timeframe per day
         # Format: {
         #   "BTCUSDT": {
-        #     "1h": {"count": 2, "last_reset": "2025-11-30", "locked": False},
-        #     "24h": {"count": 1, "last_reset": "2025-11-30", "locked": False}
+        #     "1h": {"count": 2, "last_reset": "2025-11-30", "last_alerted_open_time": 1700000400},
+        #     "24h": {"count": 1, "last_reset": "2025-11-30", "last_alerted_open_time": 1700000400}
         #   }
         # }
         self.alert_tracking = {
@@ -64,7 +69,7 @@ class VolumeAlertBot:
                 timeframe: {
                     "count": 0,
                     "last_reset": self._get_period_key(timeframe),
-                    "locked": False
+                    "last_alerted_open_time": None  # BUG FIX #1: Track open_time to prevent same-candle duplicates
                 }
                 for timeframe in self.timeframes.keys()
             }
@@ -171,12 +176,18 @@ class VolumeAlertBot:
                 
                 # Check if any pending alerts are ready to send (gap elapsed)
                 if self.pending_alerts:
-                    alert_timestamp, alert, symbol, timeframe, max_alerts = self.pending_alerts[0]
+                    # BUG FIX #2: Updated to handle new queue format with open_time
+                    alert_timestamp, alert, symbol, timeframe, max_alerts, open_time = self.pending_alerts[0]
                     time_since_last = current_time - self.last_alert_timestamp
                     
                     # If 10 minutes have passed since last alert, send the next one
                     if time_since_last >= self.alert_queue_gap:
                         self.pending_alerts.pop(0)  # Remove from queue
+                        
+                        # BUG FIX #5: Verify count hasn't exceeded max before sending
+                        if self.alert_tracking[symbol][timeframe]["count"] >= max_alerts:
+                            logger.warning(f"⚠️ Alert for {symbol} {timeframe} skipped - max alerts reached")
+                            continue
                         
                         # Format and send the alert
                         direction_emoji = "📈" if alert['volume_change_pct'] > 0 else "📉"
@@ -193,9 +204,9 @@ class VolumeAlertBot:
                         await self.telegram.send_alert_message(message)
                         self.last_alert_timestamp = current_time
                         
-                        # Update tracking for this symbol/timeframe
-                        self.alert_tracking[symbol][timeframe]["count"] += 1
-                        self.alert_tracking[symbol][timeframe]["locked"] = True
+                        # BUG FIX #5: Update tracking - count already incremented when queued
+                        # Just update last_alerted_open_time
+                        self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = open_time
                         
                         logger.info(f"📤 Queued alert sent for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
                                    f"({self.alert_tracking[symbol][timeframe]['count']}/{max_alerts}, queue size: {len(self.pending_alerts)})")
@@ -339,14 +350,13 @@ class VolumeAlertBot:
     def _get_period_key(self, timeframe: str) -> str:
         """Get the current period key for a timeframe
         
-        1h: YYYY-MM-DD-HH (resets each hour)
-        24h: YYYY-MM-DD (resets each day)
+        BUG FIX #4: Changed both 1h and 24h to reset daily (YYYY-MM-DD)
+        This ensures max 3 alerts per DAY for 1h timeframe, not per hour
+        Previous behavior allowed 72 alerts/day (3 per hour), now limited to 3/day
         """
         now = datetime.now()
-        if timeframe == "1h":
-            return now.strftime("%Y-%m-%d-%H")
-        else:  # 24h
-            return now.strftime("%Y-%m-%d")
+        # Both 1h and 24h now reset daily at UTC midnight for consistency
+        return now.strftime("%Y-%m-%d")
     
     def _reset_daily_counts(self):
         """Reset alert counters when period boundaries are crossed"""
@@ -355,10 +365,11 @@ class VolumeAlertBot:
                 current_period = self._get_period_key(timeframe)
                 last_period = self.alert_tracking[symbol][timeframe]["last_reset"]
                 
-                # If period changed, reset counter and lock
+                # If period changed, reset counter (BUG FIX #1: removed locked flag)
                 if current_period != last_period:
                     self.alert_tracking[symbol][timeframe]["count"] = 0
-                    self.alert_tracking[symbol][timeframe]["locked"] = False
+                    # BUG FIX #1: Don't reset open_time tracking - keep historical data
+                    # self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = None
                     self.alert_tracking[symbol][timeframe]["last_reset"] = current_period
                     logger.debug(f"🔄 Reset counters for {symbol} {timeframe} (new period: {current_period})")
     
@@ -366,19 +377,13 @@ class VolumeAlertBot:
         """Check a single symbol on a single timeframe INDEPENDENTLY
         
         Rules:
-        - 1h: ±50% threshold, max 3 alerts per day
-        - 24h: ±75% threshold, max 1 alert per day
-        - Once alert triggers, lock until next period
+        - 1h: ≥75% threshold, max 3 alerts per day
+        - 24h: ≥75% threshold, max 1 alert per day
+        - One alert per unique candle (tracked by open_time)
         """
         try:
             # Get the max alerts for this timeframe
             max_alerts = 3 if timeframe == "1h" else 1
-            
-            # Check if already locked for this period
-            tracking = self.alert_tracking[symbol][timeframe]
-            if tracking["locked"]:
-                logger.debug(f"🔒 {symbol} {timeframe} locked - already alerted this period")
-                return
             
             # Get current and previous candle volumes
             result = self.fetcher.get_current_and_previous(symbol, timeframe)
@@ -388,8 +393,15 @@ class VolumeAlertBot:
             
             previous_candle, current_candle = result
             
+            # BUG FIX #1: Check if this candle already triggered an alert
+            tracking = self.alert_tracking[symbol][timeframe]
+            current_open_time = current_candle.get("open_time")
+            if current_open_time == tracking["last_alerted_open_time"]:
+                logger.debug(f"✓ {symbol} {timeframe}: Already alerted for this candle (open_time={current_open_time})")
+                return
+            
             # Get the threshold for this timeframe
-            threshold = VolumeAlertConfig.VOLUME_THRESHOLDS.get(timeframe, 50)
+            threshold = VolumeAlertConfig.VOLUME_THRESHOLDS.get(timeframe, 75)
             
             # Calculate volume change
             prev_volume = previous_candle.get("volume", 0)
@@ -400,8 +412,8 @@ class VolumeAlertBot:
             
             volume_change_pct = ((curr_volume - prev_volume) / prev_volume) * 100
             
-            # Check if threshold is met
-            if abs(volume_change_pct) >= threshold:
+            # Check if threshold is met (only positive changes)
+            if volume_change_pct >= threshold:
                 # Threshold met! Check if we can send alert
                 if tracking["count"] < max_alerts:
                     # Send the alert
@@ -410,33 +422,41 @@ class VolumeAlertBot:
                         "timeframe": timeframe,
                         "volume_change_pct": volume_change_pct,
                         "current_price": current_candle.get("close", 0),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "open_time": current_open_time  # BUG FIX #1: Add open_time to alert
                     }
                     
                     # Queue or send the alert
-                    await self._queue_or_send_alert(alert, symbol, timeframe, max_alerts)
+                    await self._queue_or_send_alert(alert, symbol, timeframe, max_alerts, current_open_time)
                 else:
                     logger.info(f"⚠️ {symbol} {timeframe}: Max alerts ({max_alerts}) reached for period")
             else:
-                logger.debug(f"⏭️ {symbol} {timeframe}: {volume_change_pct:+.1f}% (need {threshold:+.0f}%)")
+                # BUG FIX #6: Log when decrease is detected and ignored
+                if volume_change_pct < 0:
+                    logger.debug(f"📉 {symbol} {timeframe}: Volume DECREASE {volume_change_pct:+.1f}% (ignored)")
+                else:
+                    logger.debug(f"⏭️ {symbol} {timeframe}: {volume_change_pct:+.1f}% (need ≥{threshold:.0f}%)")
         
         except Exception as e:
             logger.error(f"Error checking {symbol} {timeframe}: {e}")
     
-    async def _queue_or_send_alert(self, alert: dict, symbol: str, timeframe: str, max_alerts: int):
-        """Queue alert if within 10-min gap, otherwise send immediately"""
+    async def _queue_or_send_alert(self, alert: dict, symbol: str, timeframe: str, max_alerts: int, open_time: int):
+        """Queue alert if within 10-min gap, otherwise send immediately
+        
+        BUG FIX #2: Removed locked flag - use count checking only
+        """
         current_time = time.time()
         time_since_last = current_time - self.last_alert_timestamp
         
         # If last alert was < 10 min ago, queue this alert
         if time_since_last < self.alert_queue_gap and self.last_alert_timestamp > 0:
-            # Queue includes: (timestamp, alert_dict, symbol, timeframe, max_alerts)
-            self.pending_alerts.append((current_time, alert, symbol, timeframe, max_alerts))
+            # Queue includes: (timestamp, alert_dict, symbol, timeframe, max_alerts, open_time)
+            self.pending_alerts.append((current_time, alert, symbol, timeframe, max_alerts, open_time))
             wait_time = self.alert_queue_gap - time_since_last
             
-            # Mark as alerted immediately to prevent duplicate queuing
+            # BUG FIX #2: Increment count but DON'T set locked=True
             self.alert_tracking[symbol][timeframe]["count"] += 1
-            self.alert_tracking[symbol][timeframe]["locked"] = True
+            self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = open_time
             
             logger.info(f"📥 Alert QUEUED for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
                        f"(will send in {wait_time:.0f}s, queue size: {len(self.pending_alerts)})")
@@ -445,9 +465,9 @@ class VolumeAlertBot:
             await self.send_alert_formatted(alert)
             self.last_alert_timestamp = current_time
             
-            # Mark as alerted for this period
+            # BUG FIX #2: Mark as alerted without locked flag
             self.alert_tracking[symbol][timeframe]["count"] += 1
-            self.alert_tracking[symbol][timeframe]["locked"] = True
+            self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = open_time
             
             logger.info(f"📤 Alert sent for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
                        f"({self.alert_tracking[symbol][timeframe]['count']}/{max_alerts})")
@@ -502,14 +522,14 @@ async def main():
             logger.error("Cannot connect to Telegram. Exiting.")
             sys.exit(1)
         
-        print(f"\n✅ Bot ready")
+        print(f"✅ Bot ready")
         print(f"📊 Monitoring: {', '.join(bot.symbols)}")
         print(f"⏱️ Timeframes: {', '.join(bot.timeframes.keys())}")
-        print(f"📊 Volume thresholds: 1h=±30%, 24h=±50%")
+        print(f"📊 Volume thresholds: 1h=75%, 24h=75% (only increases)")
         print(f"⏳ Check interval: {bot.check_interval}s (5 minutes)")
         print(f"🚫 Max alerts per symbol: {bot.max_alerts_per_symbol}")
         print(f"💬 Telegram Chat ID: {bot.telegram_chat_id}")
-        print(f"\n🔔 Strategy: Send alert when volume change meets threshold")
+        print(f"\n🔔 Strategy: Send alert when volume increase meets threshold")
         print(f"🚫 Max {bot.max_alerts_per_symbol} alerts per symbol per cycle\n")
         print("\nPress Ctrl+C to stop\n")
         

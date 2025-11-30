@@ -19,6 +19,7 @@ Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, an
 - **Smart Alert Queue**: 10-minute gap between alerts to prevent spam (FIFO queue system)
 - **Persistent Monitoring**: Continuous market surveillance (checks every 5 minutes)
 - **Professional Formatting**: Clean, emoji-enhanced Telegram messages with direction and metrics
+- **Optional Telegram Topics**: Route alerts to specific topics or keep in general group chat
 
 ---
 
@@ -28,7 +29,7 @@ Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, an
 
 - Python 3.8+
 - Telegram Bot (created via @BotFather)
-- Telegram group or personal chat
+- Telegram group (for receiving alerts)
 
 ### Installation
 
@@ -45,12 +46,25 @@ pip install -r requirements.txt
 TELEGRAM_BOT_TOKEN=your_bot_token_here
 TELEGRAM_CHAT_ID=your_chat_id_here
 TELEGRAM_OWNER_CHAT_ID=your_owner_chat_id_here
+TELEGRAM_TOPIC_ID=your_topic_id_here  # Optional: for Telegram Topics
 ```
 
 2. **Run the bot**:
 ```bash
 python3 volume_alert_bot.py
 ```
+
+#### Optional: Telegram Topics Support
+
+Send all alerts to a specific **Telegram Topic** in your group chat:
+
+```
+TELEGRAM_TOPIC_ID=12345
+```
+
+📖 **See [TELEGRAM_TOPICS_QUICK_START.md](./TELEGRAM_TOPICS_QUICK_START.md) for setup instructions**
+
+Or read the full guide: [TELEGRAM_TOPICS.md](./TELEGRAM_TOPICS.md)
 
 ---
 

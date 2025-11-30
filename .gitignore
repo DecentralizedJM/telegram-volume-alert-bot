@@ -48,6 +48,24 @@ env/
 logs/
 *.log
 volume_bot.log
+
+# Test files
+test_*.py
+*_test.py
+TEST_*.md
+clear_queue.py
+data/
+
+# Internal documentation (development only)
+DEPLOYMENT_CHECKLIST.md
+IMPLEMENTATION_SUMMARY.md
+FEATURES_COMPLETED.txt
+DOCUMENTATION_INDEX.md
+
+# Temporary files
+.env.production
+Procfile
+docker.sh
 *.log.*
 
 # Testing

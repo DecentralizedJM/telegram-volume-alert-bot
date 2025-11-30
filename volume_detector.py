@@ -54,11 +54,13 @@ class VolumeDetector:
         threshold = self.thresholds[interval]
         
         # Check if change meets threshold
-        if abs(volume_change_pct) >= threshold:
+        # IMPORTANT: Only alert on INCREASES (positive changes)
+        # Decreases in volume don't help traders, so we skip them
+        if volume_change_pct >= threshold:
             alert = {
                 "symbol": current_candle["symbol"],
                 "interval": current_candle["interval"],
-                "type": "volume_spike" if volume_change_pct > 0 else "volume_drop",
+                "type": "volume_spike",  # Only positive spikes, no drops
                 "volume_change_pct": round(volume_change_pct, 2),
                 "current_volume": round(current_candle["volume"], 2),
                 "previous_volume": round(previous_candle["volume"], 2),

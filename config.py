@@ -18,12 +18,14 @@ class VolumeAlertConfig:
     
     # Volume change thresholds (%) by timeframe
     VOLUME_THRESHOLDS = {
-        "1h": 50,      # 1-hour: ±50% threshold (higher to reduce spam)
-        "24h": 75      # 24-hour rolling: ±75% threshold (higher to reduce spam)
+        "1h": 75,      # 1-hour: ±75% threshold (high to reduce spam, only major spikes)
+        "24h": 75      # 24-hour rolling: ±75% threshold (restrictive, only major changes)
     }
     
     # Max alerts per symbol to avoid spam
-    # Example: Max 3 BTC alerts, max 3 ETH alerts, max 3 SOL alerts
+    # Max 3 BTC alerts per DAY, max 3 ETH alerts per DAY, max 3 SOL alerts per DAY
+    # Period resets daily at UTC midnight
+    # BUG FIX #4: Clarified that reset is DAILY, not hourly
     MAX_ALERTS_PER_SYMBOL = 3
     
     # Alert queue settings: Minimum gap between alerts (in seconds)
@@ -47,6 +49,7 @@ class VolumeAlertConfig:
     # Telegram settings (loaded from .env)
     # TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     # TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+    # TELEGRAM_TOPIC_ID = os.getenv("TELEGRAM_TOPIC_ID", None)  # Optional: Topic ID if using Telegram topics
     
     @staticmethod
     def get_binance_interval(minutes: int) -> str:
