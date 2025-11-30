@@ -60,8 +60,20 @@ class VolumeAlertBot:
         # Alert tracking per symbol per timeframe per day
         # Format: {
         #   "BTCUSDT": {
-        #     "1h": {"count": 2, "last_reset": "2025-11-30", "last_alerted_open_time": 1700000400},
-        #     "24h": {"count": 1, "last_reset": "2025-11-30", "last_alerted_open_time": 1700000400}
+        #     "1h": {
+        #       "count": 2, 
+        #       "last_reset": "2025-11-30",
+        #       "last_alerted_open_time": 1700000400,
+        #       "last_alert_timestamp": 1700000000,  # Unix timestamp of last alert
+        #       "cooldown_seconds": 10800  # 3 hours for 1h, 86400 for 24h
+        #     },
+        #     "24h": {
+        #       "count": 1, 
+        #       "last_reset": "2025-11-30",
+        #       "last_alerted_open_time": 1700000400,
+        #       "last_alert_timestamp": 1700000000,
+        #       "cooldown_seconds": 86400  # 1 day for 24h
+        #     }
         #   }
         # }
         self.alert_tracking = {
@@ -69,7 +81,9 @@ class VolumeAlertBot:
                 timeframe: {
                     "count": 0,
                     "last_reset": self._get_period_key(timeframe),
-                    "last_alerted_open_time": None  # BUG FIX #1: Track open_time to prevent same-candle duplicates
+                    "last_alerted_open_time": None,  # BUG FIX #1: Track open_time to prevent same-candle duplicates
+                    "last_alert_timestamp": 0,  # IMPROVEMENT: Track when alert was sent for cooldown
+                    "cooldown_seconds": 10800 if timeframe == "1h" else 86400  # 3h for 1h, 24h for 24h
                 }
                 for timeframe in self.timeframes.keys()
             }
@@ -224,8 +238,9 @@ class VolumeAlertBot:
                         self.last_alert_timestamp = current_time
                         
                         # BUG FIX #5: Update tracking - count already incremented when queued
-                        # Just update last_alerted_open_time
+                        # Also update last_alert_timestamp for cooldown enforcement
                         self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = open_time
+                        self.alert_tracking[symbol][timeframe]["last_alert_timestamp"] = current_time
                         self._save_alert_tracking()
                         
                         logger.info(f"📤 Queued alert sent for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
@@ -425,6 +440,20 @@ class VolumeAlertBot:
                 logger.debug(f"✓ {symbol} {timeframe}: Already alerted for this candle (open_time={current_open_time})")
                 return
             
+            # IMPROVEMENT: Check if alert is in cooldown period
+            # For 1h: 3-hour cooldown (only allow 1 alert per 3 hours)
+            # For 24h: 24-hour cooldown (only allow 1 alert per day)
+            current_time = time.time()
+            time_since_last_alert = current_time - tracking.get("last_alert_timestamp", 0)
+            cooldown_seconds = tracking.get("cooldown_seconds", 86400)
+            
+            if time_since_last_alert < cooldown_seconds:
+                cooldown_remaining = cooldown_seconds - time_since_last_alert
+                cooldown_hours = cooldown_remaining / 3600
+                logger.debug(f"⏳ {symbol} {timeframe}: In cooldown period ({cooldown_hours:.1f}h remaining). "
+                           f"Will skip until next alert window.")
+                return
+            
             # Get the threshold for this timeframe
             threshold = VolumeAlertConfig.VOLUME_THRESHOLDS.get(timeframe, 75)
             
@@ -469,6 +498,7 @@ class VolumeAlertBot:
         """Queue alert if within 10-min gap, otherwise send immediately
         
         BUG FIX #2: Removed locked flag - use count checking only
+        IMPROVEMENT: Track last_alert_timestamp for cooldown enforcement
         """
         current_time = time.time()
         time_since_last = current_time - self.last_alert_timestamp
@@ -482,6 +512,8 @@ class VolumeAlertBot:
             # BUG FIX #2: Increment count but DON'T set locked=True
             self.alert_tracking[symbol][timeframe]["count"] += 1
             self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = open_time
+            # IMPROVEMENT: Record the timestamp for cooldown tracking
+            self.alert_tracking[symbol][timeframe]["last_alert_timestamp"] = current_time
             self._save_alert_tracking()
             
             logger.info(f"📥 Alert QUEUED for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
@@ -494,6 +526,8 @@ class VolumeAlertBot:
             # BUG FIX #2: Mark as alerted without locked flag
             self.alert_tracking[symbol][timeframe]["count"] += 1
             self.alert_tracking[symbol][timeframe]["last_alerted_open_time"] = open_time
+            # IMPROVEMENT: Record the timestamp for cooldown tracking
+            self.alert_tracking[symbol][timeframe]["last_alert_timestamp"] = current_time
             self._save_alert_tracking()
             
             logger.info(f"📤 Alert sent for {symbol} {timeframe}: {alert['volume_change_pct']:+.2f}% "
