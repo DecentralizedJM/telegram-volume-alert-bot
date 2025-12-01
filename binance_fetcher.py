@@ -12,6 +12,10 @@ class BinanceDataFetcher:
     def __init__(self):
         self.base_url = VolumeAlertConfig.BINANCE_BASE_URL
         self.timeout = 10
+        # Headers to help with geo-blocking issues
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
     
     def get_klines(
         self,
@@ -39,7 +43,7 @@ class BinanceDataFetcher:
             }
             
             url = f"{self.base_url}{VolumeAlertConfig.BINANCE_KLINES_ENDPOINT}"
-            response = requests.get(url, params=params, timeout=self.timeout)
+            response = requests.get(url, params=params, timeout=self.timeout, headers=self.headers)
             response.raise_for_status()
             
             return response.json()
