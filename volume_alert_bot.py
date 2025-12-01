@@ -272,14 +272,11 @@ class VolumeAlertBot:
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/getUpdates"
             
-            # IMPORTANT: Use allowed_updates parameter to avoid conflicts
-            # This limits which updates we care about, reducing overhead
+            # Simple polling without extra parameters that might cause issues
             response = requests.get(
                 url,
                 params={
-                    "offset": self.last_update_id + 1,
-                    "allowed_updates": ["message"],  # Only get message updates
-                    "limit": 1  # Get one update at a time
+                    "offset": self.last_update_id + 1
                 },
                 timeout=5
             )
