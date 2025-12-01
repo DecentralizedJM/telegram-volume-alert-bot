@@ -673,38 +673,38 @@ class VolumeAlertBot:
 
 async def main():
     """Entry point"""
-    print("\n" + "="*60)
-    print("🚀 VOLUME ALERT BOT")
-    print("="*60 + "\n")
+    logger.info("\n" + "="*60)
+    logger.info("🚀 VOLUME ALERT BOT STARTING")
+    logger.info("="*60 + "\n")
     
     try:
+        logger.info("Initializing bot...")
         bot = VolumeAlertBot()
         
         # Test Telegram connection
+        logger.info("Testing Telegram connection...")
         if not bot.test_telegram():
             logger.error("Cannot connect to Telegram. Exiting.")
             sys.exit(1)
         
-        print(f"✅ Bot ready")
-        print(f"📊 Monitoring: {', '.join(bot.symbols)}")
-        print(f"⏱️ Timeframes: {', '.join(bot.timeframes.keys())}")
-        print(f"📊 Volume thresholds: 1h=75%, 24h=75% (only increases)")
-        print(f"⏳ Check interval: {bot.check_interval}s (5 minutes)")
-        print(f"🚫 Max alerts per symbol: {bot.max_alerts_per_symbol}")
-        print(f"💬 Telegram Chat ID: {bot.telegram_chat_id}")
-        print(f"\n🔔 Strategy: Send alert when volume increase meets threshold")
-        print(f"🚫 Max {bot.max_alerts_per_symbol} alerts per symbol per cycle\n")
-        print("\nPress Ctrl+C to stop\n")
+        logger.info(f"✅ Bot ready")
+        logger.info(f"📊 Monitoring: {', '.join(bot.symbols)}")
+        logger.info(f"⏱️ Timeframes: {', '.join(bot.timeframes.keys())}")
+        logger.info(f"📊 Volume thresholds: 1h=75%, 24h=75% (only increases)")
+        logger.info(f"⏳ Check interval: {bot.check_interval}s (5 minutes)")
+        logger.info(f"🚫 Max alerts per symbol: {bot.max_alerts_per_symbol}")
+        logger.info(f"💬 Telegram Chat ID: {bot.telegram_chat_id}")
+        logger.info(f"🔔 Strategy: Send alert when volume increase meets threshold")
+        logger.info(f"🚫 Max {bot.max_alerts_per_symbol} alerts per symbol per cycle")
         
         # Run monitoring loop
         await bot.run()
     
     except KeyboardInterrupt:
-        print("\n\n✅ Bot stopped gracefully")
+        logger.info("✅ Bot stopped gracefully")
         sys.exit(0)
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
-        print(f"\n❌ Error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
