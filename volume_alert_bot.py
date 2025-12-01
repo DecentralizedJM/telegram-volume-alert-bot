@@ -13,7 +13,7 @@ from telegram_client import TelegramClient
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(VolumeAlertConfig.LOG_FILE),
@@ -219,8 +219,9 @@ class VolumeAlertBot:
                     if time_since_last >= self.alert_queue_gap:
                         self.pending_alerts.pop(0)  # Remove from queue
                         
-                        # BUG FIX #5: Verify count hasn't exceeded max before sending
-                        if self.alert_tracking[symbol][timeframe]["count"] >= max_alerts:
+                        # BUG FIX #5: Check if count strictly exceeds max (not equals)
+                        # This allows count to equal max (e.g., 3 == 3), fixing the off-by-one error
+                        if self.alert_tracking[symbol][timeframe]["count"] > max_alerts:
                             logger.warning(f"⚠️ Alert for {symbol} {timeframe} skipped - max alerts reached")
                             continue
                         

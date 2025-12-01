@@ -23,10 +23,12 @@ class CommandHandler:
 This bot is a <b>proprietary service</b> created for <b>@DecentralizedJM</b> to deliver real-time cryptocurrency volume alerts.
 
 <b>📊 Features:</b>
-• Real-time volume change detection
-• <b>1h Timeframe:</b> Alerts on ±30% volume changes
-• <b>24h Timeframe:</b> Alerts on ±50% volume changes
-• Monitoring: BTC, ETH, SOL
+• Real-time volume spike detection (≥75% threshold)
+• <b>1h Timeframe:</b> Alerts on ≥75% volume increase
+• <b>24h Timeframe:</b> Alerts on ≥75% volume increase
+• Per-asset cooldown: 3 hours (1h) / 24 hours (24h)
+• Max alerts: 3/day (1h), 1/day (24h) per asset
+• Monitoring: BTCUSDT, ETHUSDT, SOLUSDT
 • Instant Telegram notifications
 
 <b>🎯 Purpose:</b>
@@ -84,9 +86,14 @@ For more trading insights and updates, join us at <a href="https://t.me/official
 
 <b>Current Configuration:</b>
 • Monitoring: BTCUSDT, ETHUSDT, SOLUSDT
-• 1h Threshold: ±30% volume change
-• 24h Threshold: ±50% volume change
+• Timeframes: 1h, 24h
+• Volume Threshold: ≥75% increase
 • Check Interval: 5 minutes
+
+<b>Alert Rules:</b>
+• <b>1h Timeframe:</b> Max 3 alerts/day per asset, 3-hour cooldown between alerts
+• <b>24h Timeframe:</b> Max 1 alert/day per asset, 24-hour cooldown between alerts
+• Global Queue Gap: 10 minutes between any alerts
 
 <b>Commands:</b>
 • /start @Mudrex_Volume_bot - Activate monitoring
