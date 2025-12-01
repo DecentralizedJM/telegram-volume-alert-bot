@@ -119,11 +119,9 @@ class VolumeAlertBot:
         """Main monitoring loop with command handling"""
         logger.info("Starting volume alert monitoring...")
         
-        # Clear old updates from Telegram queue to avoid processing old messages
-        # MUST block here to prevent duplicate command processing
-        await self._clear_telegram_queue()
-        
-        self.last_update_id = 0
+        # DON'T clear the queue - it causes connection conflicts
+        # Just start fresh with no offset
+        self.last_update_id = -1  # Start from -1 so first offset will be 0
         self.bot_running = True
         
         # Run monitoring and command listening concurrently
@@ -143,36 +141,26 @@ class VolumeAlertBot:
     async def _clear_telegram_queue(self):
         """Clear old messages from Telegram queue on startup
         
-        Simply fetches current pending updates and discards them.
-        Telegram will auto-clear once we call getUpdates with an offset.
+        This discards any updates that Telegram has cached, so we only process
+        new messages from this point forward.
         """
         import requests
         try:
             await asyncio.sleep(0.5)  # Small delay to ensure initialization
             url = f"https://api.telegram.org/bot{self.telegram_token}/getUpdates"
             
-            # Fetch current pending updates
+            # Get current updates to see what's in the queue (NO timeout parameter - no long polling)
             response = requests.get(url, timeout=3)
             if response.status_code == 200:
                 data = response.json()
                 if data.get('ok'):
                     updates = data.get('result', [])
                     if updates:
-                        # Get the last update ID
-                        last_update_id = updates[-1].get('update_id', 0)
-                        
-                        # Tell Telegram we've processed up to this point
-                        # by fetching again with offset
-                        requests.get(
-                            url,
-                            params={"offset": last_update_id + 1},
-                            timeout=1
-                        )
-                        logger.info(f"🧹 Cleared {len(updates)} old messages from queue")
+                        # Log how many we're discarding
+                        logger.info(f"🧹 Found {len(updates)} pending messages in queue, discarding them")
                     else:
                         logger.info("🧹 Queue is clean, no pending messages")
             
-            # Don't modify last_update_id - keep it at 0 so we get all new messages
             logger.info("🧹 Queue cleared, ready for new messages")
             
         except Exception as e:
@@ -284,40 +272,60 @@ class VolumeAlertBot:
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/getUpdates"
             
-            # Use longer timeout for long polling (30 seconds for API timeout, 35 for requests)
+            # IMPORTANT: Use allowed_updates parameter to avoid conflicts
+            # This limits which updates we care about, reducing overhead
             response = requests.get(
                 url,
-                params={"offset": self.last_update_id + 1, "timeout": 30},
-                timeout=35
+                params={
+                    "offset": self.last_update_id + 1,
+                    "allowed_updates": ["message"],  # Only get message updates
+                    "limit": 1  # Get one update at a time
+                },
+                timeout=5
             )
             
             if response.status_code == 200:
                 data = response.json()
                 if data.get('ok'):
                     self.telegram_retry_count = 0  # Reset on success
-                    return data.get('result', [])
+                    updates = data.get('result', [])
+                    
+                    # Handle case where offset is invalid (409 scenario)
+                    if not updates and self.last_update_id > 0:
+                        # Offset was too high, reset to get latest
+                        logger.warning(f"Offset {self.last_update_id + 1} seems invalid, resetting to get latest updates")
+                        self.last_update_id = -1
+                    
+                    return updates
+            elif response.status_code == 409:
+                # 409 Conflict: Another bot instance is running with same token
+                # Reset offset and wait
+                self.telegram_retry_count += 1
+                self.last_update_id = -1  # Reset to fresh state
+                wait_time = min(5 * self.telegram_retry_count, 30)
+                logger.warning(f"Telegram API 409 Conflict (attempt {self.telegram_retry_count}) - resetting offset, waiting {wait_time}s")
+                await asyncio.sleep(wait_time)
+                return []
             
             logger.warning(f"Telegram API returned status {response.status_code}")
             return []
             
         except requests.exceptions.Timeout:
             self.telegram_retry_count += 1
-            wait_time = min(2 ** self.telegram_retry_count, 30)  # Exponential backoff, max 30s
+            wait_time = min(2 ** self.telegram_retry_count, 30)
             
             if self.telegram_retry_count <= self.max_consecutive_retries:
                 logger.warning(f"Telegram API timeout (attempt {self.telegram_retry_count}/{self.max_consecutive_retries}), "
                               f"will retry in {wait_time}s")
                 await asyncio.sleep(wait_time)
-                return []
             else:
-                logger.error(f"Telegram API: Max retries exceeded ({self.max_consecutive_retries}). "
-                           f"Connection may be unstable.")
+                logger.error(f"Telegram API: Max retries exceeded. Resetting offset.")
                 self.telegram_retry_count = 0
-                return []
+                self.last_update_id = -1
+            return []
                 
         except Exception as e:
-            self.telegram_retry_count += 1
-            logger.error(f"Error fetching updates: {e} (retry count: {self.telegram_retry_count})")
+            logger.error(f"Error fetching updates: {e}")
             return []
     
     async def handle_update(self, update):
@@ -336,9 +344,14 @@ class VolumeAlertBot:
             text = message.get('text', '')
             user_name = message['from'].get('first_name', 'User')
             
+            # Log all messages to help identify chat IDs
+            logger.info(f"📨 Message from {user_name} (ID: {user_id}) in chat {chat_id} (type: {chat_type}): {text[:50]}")
+            
             # Owner's Chat ID
             owner_chat_id = int(os.getenv('TELEGRAM_OWNER_CHAT_ID', '395803228'))
             is_owner = (user_id == owner_chat_id)
+            
+            logger.debug(f"[OWNER CHECK] user_id={user_id}, owner_chat_id={owner_chat_id}, is_owner={is_owner}")
             
             # Handle private messages (DMs) - Send welcome message
             if chat_type == 'private':
