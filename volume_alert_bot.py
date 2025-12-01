@@ -106,6 +106,10 @@ class VolumeAlertBot:
         self.bot_running = True
         self.owner_chat_id = int(os.getenv("TELEGRAM_OWNER_CHAT_ID", "395803228"))
         
+        # Telegram API retry tracking
+        self.telegram_retry_count = 0
+        self.max_consecutive_retries = 5
+        
         # Create data directory
         os.makedirs(VolumeAlertConfig.DATA_DIR, exist_ok=True)
         
@@ -187,16 +191,36 @@ class VolumeAlertBot:
                 await asyncio.sleep(5)
     
     async def command_listener_loop(self):
-        """Listen for /start and /stop commands"""
+        """Listen for /start and /stop commands with improved error handling"""
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+        
         while True:
             try:
                 updates = await self.fetch_updates()
-                for update in updates:
-                    await self.handle_update(update)
+                
+                if updates:
+                    consecutive_errors = 0  # Reset on success
+                    for update in updates:
+                        try:
+                            await self.handle_update(update)
+                            self.last_update_id = update.get('update_id', self.last_update_id)
+                        except Exception as e:
+                            logger.error(f"Error handling update: {e}")
+                
                 await asyncio.sleep(1)
+                
             except Exception as e:
-                logger.error(f"Error in command listener: {e}")
-                await asyncio.sleep(5)
+                consecutive_errors += 1
+                wait_time = min(2 ** consecutive_errors, 30)  # Exponential backoff, max 30s
+                
+                if consecutive_errors <= max_consecutive_errors:
+                    logger.warning(f"Command listener error: {e} (attempt {consecutive_errors}/{max_consecutive_errors})")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Command listener: Too many consecutive errors. Pausing for {wait_time}s")
+                    consecutive_errors = 0  # Reset counter after long pause
+                    await asyncio.sleep(wait_time)
     
     async def alert_queue_processor(self):
         """Process pending alerts from queue
@@ -255,23 +279,45 @@ class VolumeAlertBot:
                 await asyncio.sleep(10)
     
     async def fetch_updates(self):
-        """Fetch updates from Telegram API"""
+        """Fetch updates from Telegram API with improved retry logic"""
         import requests
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/getUpdates"
+            
+            # Use longer timeout for long polling (30 seconds for API timeout, 35 for requests)
             response = requests.get(
                 url,
-                params={"offset": self.last_update_id + 1, "timeout": 10},
-                timeout=15
+                params={"offset": self.last_update_id + 1, "timeout": 30},
+                timeout=35
             )
             
             if response.status_code == 200:
                 data = response.json()
                 if data.get('ok'):
+                    self.telegram_retry_count = 0  # Reset on success
                     return data.get('result', [])
+            
+            logger.warning(f"Telegram API returned status {response.status_code}")
             return []
+            
+        except requests.exceptions.Timeout:
+            self.telegram_retry_count += 1
+            wait_time = min(2 ** self.telegram_retry_count, 30)  # Exponential backoff, max 30s
+            
+            if self.telegram_retry_count <= self.max_consecutive_retries:
+                logger.warning(f"Telegram API timeout (attempt {self.telegram_retry_count}/{self.max_consecutive_retries}), "
+                              f"will retry in {wait_time}s")
+                await asyncio.sleep(wait_time)
+                return []
+            else:
+                logger.error(f"Telegram API: Max retries exceeded ({self.max_consecutive_retries}). "
+                           f"Connection may be unstable.")
+                self.telegram_retry_count = 0
+                return []
+                
         except Exception as e:
-            logger.error(f"Error fetching updates: {e}")
+            self.telegram_retry_count += 1
+            logger.error(f"Error fetching updates: {e} (retry count: {self.telegram_retry_count})")
             return []
     
     async def handle_update(self, update):
