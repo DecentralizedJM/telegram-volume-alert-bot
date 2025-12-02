@@ -503,17 +503,18 @@ class VolumeAlertBot:
             
             # IMPROVEMENT: Check if alert is in cooldown period
             # For 1h: 3-hour cooldown (only allow 1 alert per 3 hours)
-            # For 24h: 24-hour cooldown (only allow 1 alert per day)
-            current_time = time.time()
-            time_since_last_alert = current_time - tracking.get("last_alert_timestamp", 0)
-            cooldown_seconds = tracking.get("cooldown_seconds", 86400)
-            
-            if time_since_last_alert < cooldown_seconds:
-                cooldown_remaining = cooldown_seconds - time_since_last_alert
-                cooldown_hours = cooldown_remaining / 3600
-                logger.debug(f"⏳ {symbol} {timeframe}: In cooldown period ({cooldown_hours:.1f}h remaining). "
-                           f"Will skip until next alert window.")
-                return
+            # For 24h: No time cooldown - just one alert per candle (handled by last_alerted_open_time above)
+            if timeframe == "1h":
+                current_time = time.time()
+                time_since_last_alert = current_time - tracking.get("last_alert_timestamp", 0)
+                cooldown_seconds = tracking.get("cooldown_seconds", 10800)  # 3 hours
+                
+                if time_since_last_alert < cooldown_seconds:
+                    cooldown_remaining = cooldown_seconds - time_since_last_alert
+                    cooldown_hours = cooldown_remaining / 3600
+                    logger.debug(f"⏳ {symbol} {timeframe}: In cooldown period ({cooldown_hours:.1f}h remaining). "
+                               f"Will skip until next alert window.")
+                    return
             
             # Get the threshold for this timeframe
             threshold = VolumeAlertConfig.VOLUME_THRESHOLDS.get(timeframe, 75)
