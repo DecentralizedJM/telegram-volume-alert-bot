@@ -9,17 +9,29 @@ Real-time cryptocurrency volume alert system for Telegram. Monitors BTC, ETH, an
 ## Features
 
 - **Multi-Asset Monitoring**: BTC, ETH, SOL (easily extensible to other assets)
+- **Real-Time Spike Detection**: Compares current (incomplete) candle vs previous closed candle
 - **Independent Timeframe Checking**:
-  - **1-Hour**: ±50% volume change detection (max 3 alerts per day per asset)
-  - **24-Hour**: ±75% volume change detection (max 1 alert per day per asset)
-- **Period-Based Locking**: Once an alert triggers, it's locked until the next period starts (resets daily for both timeframes)
-- **Consecutive Period Comparison**: Compares volume between consecutive closed periods
-- **Real-Time Alerts**: Instant Telegram notifications with price and volume data
-- **Owner Control**: Start/stop monitoring with Telegram commands
-- **Smart Alert Queue**: 10-minute gap between alerts to prevent spam (FIFO queue system)
-- **Persistent Monitoring**: Continuous market surveillance (checks every 5 minutes)
-- **Professional Formatting**: Clean, emoji-enhanced Telegram messages with direction and metrics
-- **Optional Telegram Topics**: Route alerts to specific topics or keep in general group chat
+  - **1-Hour**: ≥75% volume increase triggers alert, 3-hour cooldown between alerts
+  - **24-Hour**: ≥75% volume increase triggers alert, one alert per candle (new day = new alert)
+- **Candle-Based Deduplication**: Prevents duplicate alerts for same candle
+- **Smart Alert Queue**: 10-minute gap between different alerts to prevent spam
+- **Owner Control**: Start/stop monitoring with Telegram commands (`/start`, `/stop`, `/status`)
+- **Persistent Monitoring**: Checks every 5 minutes
+- **Professional Formatting**: Clean, emoji-enhanced Telegram messages with price and volume data
+- **Telegram Topics Support**: Route alerts to specific topics in supergroups
+
+---
+
+## Alert Logic
+
+| Timeframe | Threshold | Cooldown | Behavior |
+|-----------|-----------|----------|----------|
+| **1h** | ≥75% increase | 3 hours | One alert per 3 hours per symbol |
+| **24h** | ≥75% increase | Per candle | One alert per daily candle (resets at 5:30 AM IST / 00:00 UTC) |
+
+**Volume Comparison:**
+- Compares **current candle** (accumulating) vs **previous closed candle**
+- Alerts fire in real-time as spikes happen, not after candle closes
 
 ---
 
