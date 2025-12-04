@@ -19,7 +19,7 @@ class VolumeAlertConfig:
     # Volume change thresholds (%) by timeframe
     VOLUME_THRESHOLDS = {
         "1h": 75,      # 1-hour: ±75% threshold (high to reduce spam, only major spikes)
-        "24h": 75      # 24-hour rolling: ±75% threshold (restrictive, only major changes)
+        "24h": 35      # 24-hour rolling: ±35% threshold (catch significant daily changes)
     }
     
     # Max alerts per symbol to avoid spam
