@@ -393,16 +393,20 @@ class VolumeAlertBot:
         except Exception as e:
             logger.error(f"Error handling update: {e}")
     
-    async def send_message(self, chat_id, text):
-        """Send message to Telegram"""
+    async def send_message(self, chat_id, text, topic_id=None):
+        """Send message to Telegram (optionally to a specific topic)"""
         import requests
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
-            response = requests.post(
-                url,
-                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-                timeout=10
-            )
+            payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+            
+            # Use provided topic_id or default to configured topic
+            if topic_id:
+                payload["message_thread_id"] = topic_id
+            elif self.telegram_topic_id:
+                payload["message_thread_id"] = int(self.telegram_topic_id)
+            
+            response = requests.post(url, json=payload, timeout=10)
             if response.status_code == 200:
                 logger.info(f"✅ Message sent to {chat_id}")
                 return True
